@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { AboutPage } from './pages/AboutPage';
 import { BuilderPage } from './pages/BuilderPage';
 import { ExplorerPage } from './pages/ExplorerPage';
+import { LabPage } from './pages/LabPage';
 import { hashFor, useRoute } from './route';
 import { subscribe } from './store';
 
 const PAGES = [
   { id: 'explore', label: 'Explorer' },
-  { id: 'build', label: 'Rule-set builder' },
+  { id: 'lab', label: 'Substitution lab' },
+  { id: 'build', label: 'Edge builder' },
   { id: 'about', label: 'About' },
 ] as const;
 
@@ -42,6 +44,7 @@ export function App() {
       {/* Keyed on the page so switching pages re-reads the URL. */}
       {page === 'explore' && <ExplorerPage key="explore" route={route} />}
       {page === 'build' && <BuilderPage key={`build-${route.params.get('t') ?? ''}`} route={route} />}
+      {page === 'lab' && <LabPage key="lab" route={route} />}
       {page === 'about' && <AboutPage />}
     </div>
   );

@@ -8,6 +8,7 @@
 
 import { mul, similarityFrom, transPt, tscale, IDENT, type Affine, type Pt } from './geom';
 import { signedArea } from './polygon';
+import type { LatticeSpec } from './lattice';
 import type { RuleSet } from './ruleset';
 
 export interface Prototile {
@@ -50,8 +51,8 @@ export interface Tiling {
   generate(level: number, root: string): readonly TileInstance[];
   /** Labellings that ship with the tiling, beyond the derived ones. */
   readonly presets?: readonly RuleSetPreset[];
-  /** For a JSON-defined tiling, the spec it was built from (for export). */
-  readonly spec?: SimilaritySpec;
+  /** For a data-defined tiling, the spec it was built from (for export). */
+  readonly spec?: TilingSpec;
 }
 
 export function prototile(t: Tiling, id: string): Prototile {
@@ -68,6 +69,9 @@ export const MAX_INSTANCES = 120_000;
 // ---------------------------------------------------------------------------
 
 export type XY = readonly [number, number];
+
+/** Tilings that are plain data: similarity substitutions and Substitution-lab grids. */
+export type TilingSpec = SimilaritySpec | LatticeSpec;
 
 export interface SimilarityChild {
   readonly type: string;

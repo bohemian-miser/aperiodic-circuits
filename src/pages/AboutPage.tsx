@@ -37,6 +37,28 @@ export function AboutPage() {
         </dd>
       </dl>
 
+      <h2>Building a substitution</h2>
+      <p>
+        The <a href={hashFor('lab')}>Substitution lab</a> is stage one. The Spectre is grown by one fixed arrangement of child supertiles, the same for
+        every type; what differs is the table of which type fills which slot. The lab works the same way on a grid of hexagons or squares. Switch
+        cells on to make the slots, then for each type paint a child type into every slot, turned and flipped as you like (or left empty, like the
+        Spectre Gamma's missing child). An expansion map spaces out the next level's supertiles: it has to scale area by the number of slots, and the
+        lab lists the ones that do, ticking those for which the slots are a complete set of residues (unturned children are then guaranteed to fit).
+      </p>
+      <p>
+        Because every tile stays on the grid, "does the replacement work" has an exact answer, checked at levels 1–4: no two tiles on one cell, and no
+        cell walled in without a tile. Turning or flipping a child usually breaks this a level or two later, when the child's own shape stops matching
+        its slot. The lab also shows the substitution matrix, the growth per level, and whether it's primitive.
+      </p>
+
+      <h2>Numbering the edges</h2>
+      <p>
+        Stage two is the edge builder. Its <em>Help me number the edges</em> panel reports how many tile edges always meet the same neighbour
+        edge. With only a few types almost none do, so only a couple of classes can be told apart. <em>Refine by slot</em> fixes that, the way the
+        Spectre's nine types do. It then suggests numberings: greedy merges of the finest classes that keep as many tail-free selections as
+        possible, or random merges. Each one is consistent by construction.
+      </p>
+
       <h2>Making a rule set</h2>
       <p>
         In the <a href={hashFor('build')}>builder</a>, start from a tiling's derived labelling. It's worked out from the tiling itself: seams are runs of

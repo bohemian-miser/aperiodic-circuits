@@ -5,6 +5,7 @@ import {
   derivedRuleSet,
   freshClass,
   joinWithNext,
+  MAX_CLASSES,
   mergeConflictingClasses,
   renumberClasses,
   ruleSetClasses,
@@ -15,8 +16,11 @@ import {
   type RuleSet,
   type Seam,
 } from '../core/ruleset';
-import { refineSpec, validateSimilaritySpec, type SimilaritySpec, type Tiling } from '../core/tiling';
-import { getTiling } from '../core/tilings';
+import { refineLatticeSpec } from '../core/lattice';
+import { refineSpec, type Tiling, type TilingSpec } from '../core/tiling';
+import { getTiling, validateTilingSpec } from '../core/tilings';
+import { greedySuggestions, neighbourReport, randomSuggestion, type Suggestion } from '../core/suggest';
+
 import { PatchCanvas } from '../components/PatchCanvas';
 import { TileGlyph } from '../components/TileGlyph';
 import { classColor } from '../colors';
@@ -157,8 +161,8 @@ export function BuilderPage({ route }: Props) {
   const [specText, setSpecText] = useState('');
   const registerSpec = () => {
     try {
-      const spec = JSON.parse(specText) as SimilaritySpec;
-      const errs = validateSimilaritySpec(spec);
+      const spec = JSON.parse(specText) as TilingSpec;
+      const errs = validateTilingSpec(spec);
       if (errs.length) throw new Error(errs.join('; '));
       const t = addTilingSpec(spec);
       switchTiling(t.id);
@@ -224,7 +228,8 @@ export function BuilderPage({ route }: Props) {
             <button
               type="button"
               onClick={() => {
-                const t = addTilingSpec(refineSpec(tiling.spec!));
+                const spec = tiling.spec!;
+                const t = addTilingSpec(spec.kind === 'lattice' ? refineLatticeSpec(spec) : refineSpec(spec));
                 switchTiling(t.id);
                 setMessage(`Made “${t.name}”: each tile now knows which slot of its supertile it fills.`);
               }}
@@ -309,6 +314,8 @@ export function BuilderPage({ route }: Props) {
             )}
           </p>
         </section>
+
+        <EdgeHelp tiling={tiling} onUse={(rs) => edit({ ...rs, id: draft.id, name: draft.name === '' ? rs.name : draft.name })} />
 
         <section>
           <h2>Keep it</h2>
@@ -403,5 +410,85 @@ export function BuilderPage({ route }: Props) {
         </div>
       </main>
     </div>
+  );
+}
+
+/** Stage two's automatic help: what the tiling's own adjacency allows, and labellings worth trying. */
+function EdgeHelp({ tiling, onUse }: { readonly tiling: Tiling; readonly onUse: (rs: RuleSet) => void }) {
+  const report = useMemo(() => neighbourReport(tiling), [tiling]);
+  const base = useMemo(() => derivedRuleSet(tiling, 'seams'), [tiling]);
+  const baseClasses = ruleSetClasses(base).length;
+  const [list, setList] = useState<Suggestion[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [k, setK] = useState(4);
+  const shown = (list ?? []).filter((s) => s.classes <= 12).sort((a, b) => a.classes - b.classes);
+  const share = report.total ? report.determined / report.total : 0;
+
+  return (
+    <section>
+      <h2>Help me number the edges</h2>
+      <p className="hint">
+        {report.determined} of {report.total} tile edges always meet the same neighbour edge.{' '}
+        {share < 0.25
+          ? 'Most edges meet many different neighbours, so few classes can be told apart. Refining by supertile slot gives each tile more to remember.'
+          : share < 1
+            ? 'Some edges still meet several neighbours; those classes get merged.'
+            : 'Every edge has one partner: the types carry their own matching rules, like a collared substitution.'}
+      </p>
+      <p className="hint">
+        The finest consistent numbering has {baseClasses} class{baseClasses === 1 ? '' : 'es'}
+        {baseClasses > MAX_CLASSES ? `, more than the ${MAX_CLASSES} that fit a share string; use a suggestion to bring it down` : ''}. Every suggestion below merges those classes, so it's consistent by construction.
+      </p>
+      <div className="row wrap">
+        <button type="button" onClick={() => onUse(base)}>
+          Use finest
+        </button>
+        <button
+          type="button"
+          disabled={busy || baseClasses < 3}
+          onClick={() => {
+            setBusy(true);
+            // Let the button repaint before the search blocks the thread.
+            setTimeout(() => {
+              setList(greedySuggestions(tiling, base));
+              setBusy(false);
+            }, 20);
+          }}
+        >
+          {busy ? 'Searching…' : 'Suggest numberings'}
+        </button>
+      </div>
+      <div className="row">
+        <button type="button" disabled={baseClasses < 2} onClick={() => onUse(randomSuggestion(tiling, base, k).ruleSet)}>
+          Random merge to
+        </button>
+        <input type="number" min={1} max={Math.min(MAX_CLASSES, baseClasses)} value={k} onChange={(e) => setK(Math.max(1, Number(e.target.value) || 1))} style={{ width: 64 }} aria-label="Number of classes" />
+        <span className="hint">classes</span>
+      </div>
+      {list && (
+        <table className="suggest">
+          <thead>
+            <tr>
+              <th>Classes</th>
+              <th>Tail-free selections</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((s) => (
+              <tr key={s.classes}>
+                <td>{s.classes}</td>
+                <td>{s.tailFree.toLocaleString()}</td>
+                <td>
+                  <button type="button" className="linkish on" onClick={() => onUse(s.ruleSet)}>
+                    use
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }

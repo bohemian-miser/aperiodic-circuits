@@ -1,4 +1,5 @@
-import { similarityTiling, type SimilaritySpec, type Tiling } from '../tiling';
+import { latticeTiling, validateLatticeSpec } from '../lattice';
+import { similarityTiling, validateSimilaritySpec, type Tiling, type TilingSpec } from '../tiling';
 import { chairTiling } from './chair';
 import { penroseTiling } from './penrose';
 import { hexTiling, spectreTiling } from './spectre';
@@ -7,10 +8,20 @@ export const BUILTIN_TILINGS: readonly Tiling[] = [hexTiling, spectreTiling, pen
 
 const custom = new Map<string, Tiling>();
 
-/** Register a JSON-defined tiling (from an imported rule set or the builder). */
-export function registerCustomTiling(spec: SimilaritySpec): Tiling {
+export function validateTilingSpec(spec: TilingSpec): string[] {
+  if (spec?.kind === 'lattice') return validateLatticeSpec(spec);
+  if (spec?.kind === 'similarity') return validateSimilaritySpec(spec);
+  return ['kind must be "similarity" or "lattice"'];
+}
+
+export function tilingFromSpec(spec: TilingSpec): Tiling {
+  return spec.kind === 'lattice' ? latticeTiling(spec) : similarityTiling(spec);
+}
+
+/** Register a data-defined tiling (imported, refined, or from the Substitution lab). */
+export function registerCustomTiling(spec: TilingSpec): Tiling {
   if (BUILTIN_TILINGS.some((t) => t.id === spec.id)) throw new Error(`"${spec.id}" is a built-in tiling id`);
-  const t = similarityTiling(spec);
+  const t = tilingFromSpec(spec);
   custom.set(t.id, t);
   return t;
 }
