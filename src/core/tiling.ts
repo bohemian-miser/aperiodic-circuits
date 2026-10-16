@@ -51,8 +51,24 @@ export interface Tiling {
   generate(level: number, root: string): readonly TileInstance[];
   /** Labellings that ship with the tiling, beyond the derived ones. */
   readonly presets?: readonly RuleSetPreset[];
+  /**
+   * The substitution as a tree, for growing the plane on demand (infinite
+   * mode). `children(type, level)` lists the level-(level-1) supertiles inside
+   * a level-`level` supertile of `type`, each by a rigid map from its own frame
+   * to the parent's. A level-0 node is a leaf tile in its prototile frame.
+   */
+  readonly hierarchy?: Hierarchy;
   /** For a data-defined tiling, the spec it was built from (for export). */
   readonly spec?: TilingSpec;
+}
+
+export interface HierarchyChild {
+  readonly type: string;
+  readonly xform: Affine;
+}
+
+export interface Hierarchy {
+  children(type: string, level: number): readonly HierarchyChild[];
 }
 
 export function prototile(t: Tiling, id: string): Prototile {
@@ -162,7 +178,25 @@ export function similarityTiling(spec: SimilaritySpec, presets?: readonly RuleSe
     );
   }
   const roots = prototiles.map((p) => p.id);
+  // Child maps between supertile frames in which leaves are unit-sized:
+  // tscale(λ^k) · m · tscale(λ^-(k-1)), a rigid map.
+  const relCache = new Map<number, Map<string, HierarchyChild[]>>();
+  const hierarchy: Hierarchy = {
+    children(type, level) {
+      let byType = relCache.get(level);
+      if (!byType) relCache.set(level, (byType = new Map()));
+      let out = byType.get(type);
+      if (!out) {
+        const up = tscale(Math.pow(spec.inflation, level));
+        const down = tscale(Math.pow(spec.inflation, 1 - level));
+        out = (childMaps.get(type) ?? []).map((c) => ({ type: c.type, xform: mul(mul(up, c.m), down) }));
+        byType.set(type, out);
+      }
+      return out;
+    },
+  };
   return {
+    hierarchy,
     id: spec.id,
     name: spec.name,
     description: spec.description ?? '',

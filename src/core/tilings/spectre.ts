@@ -98,6 +98,7 @@ interface Leaf {
 }
 interface Meta {
   readonly kind: 'meta';
+  readonly type: string;
   readonly children: readonly { node: Node; xform: Affine }[];
 }
 type Node = Leaf | Meta;
@@ -147,7 +148,7 @@ function supertiles(sys: System, quad: readonly Pt[]): { sys: System; quad: Pt[]
     subs.forEach((s, i) => {
       if (s !== 'null') children.push({ node: sys[s], xform: Ts[i] });
     });
-    out[lab] = { kind: 'meta', children };
+    out[lab] = { kind: 'meta', type: lab, children };
   }
   return { sys: out, quad: superQuad };
 }
@@ -178,6 +179,12 @@ function compositionTiling(opts: {
     return levels[lv];
   };
   return {
+    hierarchy: {
+      children(type, level) {
+        const node = systemAt(level)[type];
+        return node?.kind === 'meta' ? node.children.map((c) => ({ type: c.node.type, xform: c.xform })) : [];
+      },
+    },
     id: opts.id,
     name: opts.name,
     description: opts.description,

@@ -15,7 +15,7 @@
  */
 
 import { type Affine, type Pt } from './geom';
-import { MAX_INSTANCES, paletteColor, type Prototile, type TileInstance, type Tiling } from './tiling';
+import { MAX_INSTANCES, paletteColor, type HierarchyChild, type Prototile, type TileInstance, type Tiling } from './tiling';
 
 export type GridKind = 'hex' | 'square';
 
@@ -442,7 +442,19 @@ export function latticeTiling(spec: LatticeSpec): Tiling {
   // Aim for a few thousand tiles at the default level.
   const defaultLevel = spec.defaultLevel ?? Math.max(2, Math.min(6, Math.floor(Math.log(3000) / Math.log(n))));
   const maxLevel = spec.maxLevel ?? Math.max(defaultLevel, Math.floor(Math.log(60000) / Math.log(n)));
+  const hierarchy = {
+    children(type: string, level: number): HierarchyChild[] {
+      const Mn = ipow(spec.matrix, level - 1);
+      const out: HierarchyChild[] = [];
+      for (const c of spec.cells) {
+        const ch = childOf(spec, type, c);
+        if (ch) out.push({ type: ch.type, xform: leafXform(spec.grid, iapply(Mn, c), orientation(spec.grid, ch.rot, ch.flip)) });
+      }
+      return out;
+    },
+  };
   return {
+    hierarchy,
     id: spec.id,
     name: spec.name,
     description: spec.description ?? `Built in the Substitution lab: ${n} ${spec.grid === 'hex' ? 'hexagons' : 'squares'} per supertile.`,
