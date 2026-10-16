@@ -44,6 +44,7 @@ The [Spectre circuits](https://github.com/bohemian-miser/Spectre) idea, opened u
 src/core/          the engine, no React
   tiling.ts        prototiles, similarity substitutions (JSON), refinement
   chain.ts         chain substitutions (the Spectre's construction as data), checks, presets
+  sides.ts         side-glued substitutions: a grid picture + six corners per type, higher levels by gluing sides
   lattice.ts       Substitution-lab grids: slots, orientations, expansion maps, overlap/hole checks
   suggest.ts       edge-numbering suggestions and the neighbour report
   infinite.ts      infinite mode: anchored ancestor chain, viewport culling

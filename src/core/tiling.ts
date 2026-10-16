@@ -10,6 +10,7 @@ import { mul, similarityFrom, transPt, tscale, IDENT, type Affine, type Pt } fro
 import { signedArea } from './polygon';
 import type { ChainSpec } from './chain';
 import type { LatticeSpec } from './lattice';
+import type { SidesSpec } from './sides';
 import type { RuleSet } from './ruleset';
 
 export interface Prototile {
@@ -88,7 +89,7 @@ export const MAX_INSTANCES = 120_000;
 export type XY = readonly [number, number];
 
 /** Tilings that are plain data: similarity substitutions, lab grids and lab chains. */
-export type TilingSpec = SimilaritySpec | LatticeSpec | ChainSpec;
+export type TilingSpec = SimilaritySpec | LatticeSpec | ChainSpec | SidesSpec;
 
 export interface SimilarityChild {
   readonly type: string;
