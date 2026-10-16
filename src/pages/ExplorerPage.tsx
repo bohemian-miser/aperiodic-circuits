@@ -7,6 +7,7 @@ import { decodeShare, encodeShare } from '../core/share';
 import { getTiling } from '../core/tilings';
 import { InfinitePlane, meanTileArea, supportsInfinite, type Rect } from '../core/infinite';
 import { qkey } from '../core/polygon';
+import { StrandChase, type ChaseStatus } from '../core/chase';
 import type { Tiling } from '../core/tiling';
 import { PatchCanvas, pathColors } from '../components/PatchCanvas';
 import { TileGlyph } from '../components/TileGlyph';
@@ -77,12 +78,27 @@ export function ExplorerPage({ route }: Props) {
   const [infiniteOn, setInfiniteOn] = useState(() => p.get('inf') === '1');
   const [seed, setSeed] = useState(() => Math.max(1, Number(p.get('seed')) || 1));
   const [viewRect, setViewRect] = useState<Rect>(INITIAL_VIEW);
+  // What the plane was last grown over: the view plus a margin. A view that
+  // still fits inside it (and isn't much smaller) doesn't regrow anything.
+  const [grownRect, setGrownRect] = useState<Rect>(() => withMargin(INITIAL_VIEW));
+  const onViewChange = useCallback((r: Rect) => {
+    setViewRect(r);
+    setGrownRect((g) => (covers(g, r) && area(g) < 4 * area(r) ? g : withMargin(r)));
+  }, []);
   const [showBackground, setShowBackground] = useStoredFlag('background', true);
   const [showTiles, setShowTiles] = useStoredFlag('tile-colours', true);
   const [rainbowLines, setRainbowLines] = useStoredFlag('rainbow-lines', true);
   const [showClassEdges, setShowClassEdges] = useState(false);
   const [lineWidth, setLineWidth] = useState(1);
-  const [screenTiles, setScreenTiles] = useStoredNumber('infinite-screen-tiles', INFINITE_SCREEN_TILES, SCREEN_TILE_OPTIONS);
+  const [screenTiles, setScreenTiles] = useStoredNumber('infinite-screen-tiles', INFINITE_SCREEN_TILES, (n) => SCREEN_TILE_OPTIONS.includes(n));
+  // Chasing a picked line (infinite mode), as on the Spectre project's map.
+  const [chaseOn, setChaseOn] = useStoredFlag('chase', true);
+  const [fullSpeed, setFullSpeed] = useStoredFlag('chase-full-speed', true);
+  const [pace, setPace] = useStoredNumber('chase-pace', 24, (n) => n >= 1 && n <= 240);
+  const [damping, setDamping] = useStoredNumber('chase-damping', 1, (n) => n >= MIN_DAMPING && n <= MAX_DAMPING);
+  const [hold, setHold] = useStoredNumber('chase-hold', 0, (n) => n >= 0 && Number.isInteger(n));
+  const [chase, setChase] = useState<StrandChase | null>(null);
+  const [chaseInfo, setChaseInfo] = useState<{ steps: number; status: ChaseStatus } | null>(null);
 
   // Switching tiling or rule set resets the dependent state.
   const switchTiling = (id: string) => {
@@ -109,18 +125,23 @@ export function ExplorerPage({ route }: Props) {
   const plane = useMemo(() => (infinite ? new InfinitePlane(tiling, root, seed) : null), [infinite, tiling, root, seed]);
   const instances = useMemo(() => {
     if (!plane) return tiling.generate(level, root);
-    // Grow a margin past the screen so a short pan doesn't show an edge.
-    const w = viewRect.maxX - viewRect.minX;
-    const h = viewRect.maxY - viewRect.minY;
-    const rect = { minX: viewRect.minX - w * 0.15, minY: viewRect.minY - h * 0.15, maxX: viewRect.maxX + w * 0.15, maxY: viewRect.maxY + h * 0.15 };
-    return plane.query(rect, Math.ceil(screenTiles * INFINITE_QUERY_FACTOR)).instances;
-  }, [plane, tiling, level, root, viewRect, screenTiles]);
+    return plane.query(grownRect, Math.ceil(screenTiles * INFINITE_QUERY_FACTOR)).instances;
+  }, [plane, tiling, level, root, grownRect, screenTiles]);
   const adjacency = useMemo(() => computeAdjacency(tiling, instances), [tiling, instances]);
   const circuits: CircuitResult = useMemo(
     () => computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }),
     [tiling, ruleSet, instances, selection, combo, adjacency],
   );
   useEffect(() => setPickedAt(null), [tiling, ruleSet, root, seed, infinite]);
+  // A chase belongs to one plane and one set of lines.
+  useEffect(() => setChase(null), [plane, ruleSet, selection, combo, chaseOn]);
+  useEffect(() => {
+    if (chase) chase.hold = hold;
+  }, [chase, hold]);
+  useEffect(() => setChaseInfo(chase ? { steps: chase.steps, status: chase.status } : null), [chase]);
+  const onChaseTick = useCallback(() => {
+    if (chase) setChaseInfo({ steps: chase.steps, status: chase.status });
+  }, [chase]);
   const selectedPath = useMemo(() => {
     if (!pickedAt) return null;
     const want = new Set(pickedAt);
@@ -152,7 +173,17 @@ export function ExplorerPage({ route }: Props) {
     if (!pickedAt || next.join() !== [...pickedAt].sort().join()) setPickedAt(next);
   }, [infinite, selectedPath, circuits, viewRect, pickedAt]);
 
-  const setSelectedPath = (pi: number | null) => {
+  const setSelectedPath = (pi: number | null, chord: number | null = null) => {
+    if (plane && chaseOn) {
+      // In infinite mode a click starts a chase from the chord clicked.
+      const ch = chord === null ? undefined : circuits.chords[chord];
+      const tile = ch && instances.find((i) => i.id === ch.inst);
+      setChase(ch && tile ? new StrandChase(plane, tiling, ruleSet, selection, combo, ch, tile.xform, hold) : null);
+      if (ch && tile) {
+        setPickedAt(null);
+        return;
+      }
+    }
     const first = pi === null ? undefined : circuits.paths[pi]?.chords[0];
     setPickedAt(first === undefined ? null : [qkey(circuits.chords[first].a, 1e3)]);
   };
@@ -302,8 +333,7 @@ export function ExplorerPage({ route }: Props) {
           {infinite ? (
             <>
               <p className="hint">
-                The whole plane, grown around the view as you pan ({instances.length.toLocaleString()} tiles in view). Click a line to trace it: it stays
-                picked, in a rainbow, as you follow it.
+                The whole plane, grown around the view as you pan ({instances.length.toLocaleString()} tiles in view). {chaseOn ? 'Click a line and the camera chases it across the plane.' : 'Click a line to trace it: it stays picked, in a rainbow, as you follow it.'}
               </p>
               <div className="row">
                 <label className="field inline">
@@ -314,6 +344,60 @@ export function ExplorerPage({ route }: Props) {
                   New tiling
                 </button>
               </div>
+              <div className="checks">
+                <label title="Click a line and the camera chases it across the plane. Dragging takes the camera back until you let go; scroll-zoom stays yours.">
+                  <input type="checkbox" checked={chaseOn} onChange={(e) => setChaseOn(e.target.checked)} /> Chase the picked line
+                </label>
+                <label title="Walk the line as fast as the camera can follow">
+                  <input type="checkbox" checked={fullSpeed} disabled={!chaseOn} onChange={(e) => setFullSpeed(e.target.checked)} /> Full speed
+                </label>
+              </div>
+              {chaseOn && (
+                <>
+                  {!fullSpeed && (
+                    <label className="field">
+                      <span>
+                        Pace <small>{pace} tiles/s</small>
+                      </span>
+                      <input type="range" min={1} max={240} step={1} value={pace} onChange={(e) => setPace(Number(e.target.value))} />
+                    </label>
+                  )}
+                  <label className="field" title="How floaty the camera is: 1× is the Spectre map's feel">
+                    <span>
+                      Damping <small>{damping < 1 ? damping.toFixed(2) : damping.toFixed(1)}×</small>
+                    </span>
+                    {/* Log scale: the everyday settings all sit under 3×. */}
+                    <input
+                      type="range"
+                      min={Math.log(MIN_DAMPING)}
+                      max={Math.log(MAX_DAMPING)}
+                      step="any"
+                      value={Math.log(damping)}
+                      onChange={(e) => setDamping(Number(Math.exp(Number(e.target.value)).toPrecision(2)))}
+                    />
+                  </label>
+                  <label className="field inline" title="How many tiles of trail to keep behind the head. 0 keeps all of it (up to a million).">
+                    <span>Hold</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={500}
+                      value={hold}
+                      onChange={(e) => setHold(Math.max(0, Math.floor(Number(e.target.value)) || 0))}
+                      style={{ width: 90 }}
+                    />
+                    <small>tiles of trail, 0 = all</small>
+                  </label>
+                  {chaseInfo && (
+                    <div className="row">
+                      <span className="hint">{describeChase(chaseInfo)}</span>
+                      <button type="button" onClick={() => setChase(null)}>
+                        Stop
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
               <details>
                 <summary>Advanced</summary>
                 <label className="field" title="How far you can zoom out. Every pan regrows what's on screen, so more tiles means slower panning.">
@@ -477,12 +561,16 @@ export function ExplorerPage({ route }: Props) {
           showOutlines={showBackground}
           rainbowLines={rainbowLines}
           classEdges={showClassEdges ? selection : null}
-          selectedPath={selectedPath}
+          selectedPath={chase ? null : selectedPath}
           onSelectPath={setSelectedPath}
+          chase={chase}
+          chasePace={fullSpeed ? null : pace}
+          chaseDamping={damping}
+          onChaseTick={onChaseTick}
           lineWidth={lineWidth}
           fitKey={infinite ? plane : undefined}
           fitBounds={infinite ? INITIAL_VIEW : undefined}
-          onViewChange={infinite ? setViewRect : undefined}
+          onViewChange={infinite ? onViewChange : undefined}
           zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
           selectedRainbow={infinite}
         />
@@ -512,14 +600,17 @@ export function ExplorerPage({ route }: Props) {
               {lengths.length > 14 && <small>+{lengths.length - 14} more lengths</small>}
             </span>
           )}
-          {sel && (
+          {chaseInfo && <span className="picked">{describeChase(chaseInfo)}</span>}
+          {sel && !chaseInfo && (
             <span className="picked">
               Picked: {sel.closed ? 'circuit' : sel.ends.includes('tail') ? 'line with a tail' : infinite ? 'line, runs off screen' : 'open line (leaves the patch)'}, {sel.chords.length} segments
               {infinite && !sel.closed ? ' so far' : ''}
             </span>
           )}
         </div>
-        <p className="stage-hint">Drag to pan, scroll or pinch to zoom, click a line to pick it out.</p>
+        <p className="stage-hint">
+          Drag to pan, scroll or pinch to zoom, click a line to {infinite && chaseOn ? 'chase it' : 'pick it out'}.
+        </p>
       </main>
     </div>
   );
@@ -532,6 +623,28 @@ const INFINITE_SCREEN_TILES = 50_000;
 const SCREEN_TILE_OPTIONS = [10_000, 25_000, 50_000, 100_000, 200_000];
 /** …and a query returns at most this multiple of it (the screen plus a 15% margin each side). */
 const INFINITE_QUERY_FACTOR = 1.75;
+const MIN_DAMPING = 0.25;
+const MAX_DAMPING = 30;
+
+function withMargin(r: Rect): Rect {
+  // Grow a margin past the screen so a short pan doesn't show an edge.
+  const w = (r.maxX - r.minX) * 0.15;
+  const h = (r.maxY - r.minY) * 0.15;
+  return { minX: r.minX - w, minY: r.minY - h, maxX: r.maxX + w, maxY: r.maxY + h };
+}
+
+function covers(outer: Rect, inner: Rect): boolean {
+  return outer.minX <= inner.minX && outer.minY <= inner.minY && outer.maxX >= inner.maxX && outer.maxY >= inner.maxY;
+}
+
+function area(r: Rect): number {
+  return (r.maxX - r.minX) * (r.maxY - r.minY);
+}
+
+function describeChase(c: { steps: number; status: ChaseStatus }): string {
+  const n = c.steps.toLocaleString();
+  return c.status === 'closed' ? `Chased a closed circuit: ${n} tiles round` : c.status === 'tail' ? `Chase ended in a tail after ${n} tiles` : `Chasing… ${n} tiles`;
+}
 
 interface SurveyProps {
   readonly tiling: Tiling;
@@ -655,13 +768,14 @@ function Survey({ tiling, ruleSet, selection, counts, onPick }: SurveyProps) {
   );
 }
 
-/** A numeric setting from a fixed list, remembered in this browser. */
-function useStoredNumber(name: string, initial: number, allowed: readonly number[]): [number, (v: number) => void] {
+/** A numeric setting, remembered in this browser if it passes `ok`. */
+function useStoredNumber(name: string, initial: number, ok: (v: number) => boolean): [number, (v: number) => void] {
   const key = `aperiodic-circuits:view:${name}`;
   const [value, setValue] = useState(() => {
     try {
-      const v = Number(localStorage.getItem(key));
-      return allowed.includes(v) ? v : initial;
+      const raw = localStorage.getItem(key);
+      const v = Number(raw);
+      return raw !== null && Number.isFinite(v) && ok(v) ? v : initial;
     } catch {
       return initial;
     }
