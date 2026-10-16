@@ -82,6 +82,7 @@ export function ExplorerPage({ route }: Props) {
   const [rainbowLines, setRainbowLines] = useStoredFlag('rainbow-lines', true);
   const [showClassEdges, setShowClassEdges] = useState(false);
   const [lineWidth, setLineWidth] = useState(1);
+  const [screenTiles, setScreenTiles] = useStoredNumber('infinite-screen-tiles', INFINITE_SCREEN_TILES, SCREEN_TILE_OPTIONS);
 
   // Switching tiling or rule set resets the dependent state.
   const switchTiling = (id: string) => {
@@ -112,8 +113,8 @@ export function ExplorerPage({ route }: Props) {
     const w = viewRect.maxX - viewRect.minX;
     const h = viewRect.maxY - viewRect.minY;
     const rect = { minX: viewRect.minX - w * 0.15, minY: viewRect.minY - h * 0.15, maxX: viewRect.maxX + w * 0.15, maxY: viewRect.maxY + h * 0.15 };
-    return plane.query(rect, INFINITE_MAX_TILES).instances;
-  }, [plane, tiling, level, root, viewRect]);
+    return plane.query(rect, Math.ceil(screenTiles * INFINITE_QUERY_FACTOR)).instances;
+  }, [plane, tiling, level, root, viewRect, screenTiles]);
   const adjacency = useMemo(() => computeAdjacency(tiling, instances), [tiling, instances]);
   const circuits: CircuitResult = useMemo(
     () => computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }),
@@ -313,6 +314,19 @@ export function ExplorerPage({ route }: Props) {
                   New tiling
                 </button>
               </div>
+              <details>
+                <summary>Advanced</summary>
+                <label className="field" title="How far you can zoom out. Every pan regrows what's on screen, so more tiles means slower panning.">
+                  <span>Zoom-out limit</span>
+                  <select value={screenTiles} onChange={(e) => setScreenTiles(Number(e.target.value))}>
+                    {SCREEN_TILE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        about {n.toLocaleString()} tiles on screen{n === INFINITE_SCREEN_TILES ? ' (default)' : n > INFINITE_SCREEN_TILES ? ' (slow)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </details>
             </>
           ) : (
             <label className="field">
@@ -469,7 +483,7 @@ export function ExplorerPage({ route }: Props) {
           fitKey={infinite ? plane : undefined}
           fitBounds={infinite ? INITIAL_VIEW : undefined}
           onViewChange={infinite ? setViewRect : undefined}
-          zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: INFINITE_SCREEN_TILES } : undefined}
+          zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
           selectedRainbow={infinite}
         />
         <div className="stats">
@@ -513,10 +527,11 @@ export function ExplorerPage({ route }: Props) {
 
 /** Infinite mode starts looking at this window round the centre tile. */
 const INITIAL_VIEW: Rect = { minX: -16, minY: -16, maxX: 16, maxY: 16 };
-/** Zoom-out stops at about this many tiles on screen… */
-const INFINITE_SCREEN_TILES = 9000;
-/** …and a query never returns more than this (screen plus margin). */
-const INFINITE_MAX_TILES = 40000;
+/** By default zoom-out stops at about this many tiles on screen (Advanced can change it)… */
+const INFINITE_SCREEN_TILES = 50_000;
+const SCREEN_TILE_OPTIONS = [10_000, 25_000, 50_000, 100_000, 200_000];
+/** …and a query returns at most this multiple of it (the screen plus a 15% margin each side). */
+const INFINITE_QUERY_FACTOR = 1.75;
 
 interface SurveyProps {
   readonly tiling: Tiling;
@@ -638,6 +653,28 @@ function Survey({ tiling, ruleSet, selection, counts, onPick }: SurveyProps) {
       )}
     </section>
   );
+}
+
+/** A numeric setting from a fixed list, remembered in this browser. */
+function useStoredNumber(name: string, initial: number, allowed: readonly number[]): [number, (v: number) => void] {
+  const key = `aperiodic-circuits:view:${name}`;
+  const [value, setValue] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem(key));
+      return allowed.includes(v) ? v : initial;
+    } catch {
+      return initial;
+    }
+  });
+  const set = (v: number) => {
+    setValue(v);
+    try {
+      localStorage.setItem(key, String(v));
+    } catch {
+      /* private window: just don't remember */
+    }
+  };
+  return [value, set];
 }
 
 /** A display toggle remembered in this browser. */
