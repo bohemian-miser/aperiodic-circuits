@@ -95,8 +95,9 @@ export function AboutPage() {
       <p>
         Switch the patch to <em>Infinite</em> to see the whole plane instead of one supertile. As in the Spectre project, a tile is anchored at the
         centre and its ancestors are chosen one level at a time going up (at random from the seed, weighted by how common each type is), and only the
-        supertiles that touch the view are opened up. Pan as far as you like; tiles never move once placed. Click a line to trace it in a rainbow, and
-        it stays picked as you follow it. This works for every tiling here, including ones built in the lab.
+        supertiles that touch the view are opened up. Pan as far as you like; tiles never move once placed. Click a line and the camera chases it across the plane, as on
+        the Spectre project's map, walking it tile by tile and leaving a rainbow trail until it closes or hits a tail (turn the chase off
+        to just trace the line and pan along it yourself). This works for every tiling here, including ones built in the lab.
       </p>
 
       <h2>Tiling JSON</h2>

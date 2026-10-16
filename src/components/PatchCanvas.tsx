@@ -4,6 +4,8 @@ import type { Pt } from '../core/geom';
 import { edgeSeamIndex, type RuleSet } from '../core/ruleset';
 import { instancePts, patchBounds, prototile, type TileInstance, type Tiling } from '../core/tiling';
 import { classColor, lengthHue, OPEN_COLOR, rainbow, TAIL_COLOR } from '../colors';
+import type { StrandChase } from '../core/chase';
+import { advanceFollowCamera, createFollowCamera } from '../core/followCamera';
 
 export interface PatchCanvasProps {
   readonly tiling: Tiling;
@@ -17,7 +19,8 @@ export interface PatchCanvasProps {
   /** Stroke edges in their class colour (only the classes given, if any). */
   readonly classEdges?: ReadonlySet<number> | 'all' | null;
   readonly selectedPath?: number | null;
-  readonly onSelectPath?: (path: number | null) => void;
+  /** A click picked a line (its path and the chord clicked), or nothing. */
+  readonly onSelectPath?: (path: number | null, chord: number | null) => void;
   readonly lineWidth?: number;
   /** Re-fit the view when this changes (default: whenever the patch changes). */
   readonly fitKey?: unknown;
@@ -29,7 +32,18 @@ export interface PatchCanvasProps {
   readonly zoomLimit?: { readonly tileArea: number; readonly maxTiles: number };
   /** Draw the picked line as a rainbow from end to end (infinite mode's traced strand). */
   readonly selectedRainbow?: boolean;
+  /** A line being chased: walked on, drawn as a trail over everything, with the camera riding its head. */
+  readonly chase?: StrandChase | null;
+  /** Chase pace in tiles per second, or null to go as fast as the camera can follow. */
+  readonly chasePace?: number | null;
+  /** Follow-camera damping: 1 is the Spectre map's feel, higher is floatier. */
+  readonly chaseDamping?: number;
+  /** Called a few times a second while the chase moves on. */
+  readonly onChaseTick?: () => void;
 }
+
+/** The chase trail's rainbow runs red to violet and back every this many tiles. */
+const TRAIL_PERIOD = 600;
 
 export interface WorldRect {
   readonly minX: number;
@@ -60,8 +74,14 @@ export function pathColors(r: CircuitResult): string[] {
   return r.paths.map((p) => (p.closed ? lengthHue(rank.get(p.chords.length) ?? 0) : p.ends.includes('tail') ? TAIL_COLOR : OPEN_COLOR));
 }
 
+/** Chord line width in world units at this zoom. */
+function chordWidth(scale: number, lineWidth = 1): number {
+  const px = 1 / scale;
+  return lineWidth * Math.max(1.2 * px, Math.min(0.14, 4 * px));
+}
+
 export function PatchCanvas(props: PatchCanvasProps) {
-  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath } = props;
+  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath, chase = null } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 });
@@ -146,6 +166,52 @@ export function PatchCanvas(props: PatchCanvasProps) {
     return { all: p, buckets };
   }, [circuits, selectedPath]);
 
+  // The chase trail, kept as Path2Ds that only ever get appended to (rebuilt
+  // when the hold drops chords off the back).
+  const trail = useRef<{ chase: StrandChase; dropped: number; built: number; all: Path2D; buckets: Map<string, Path2D> } | null>(null);
+  const drawTrail = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
+    if (!chase) return;
+    let T = trail.current;
+    if (!T || T.chase !== chase || T.dropped !== chase.dropped) {
+      T = trail.current = { chase, dropped: chase.dropped, built: 0, all: new Path2D(), buckets: new Map() };
+    }
+    for (; T.built < chase.chords; T.built++) {
+      const ch = chase.chord(T.built);
+      const u = ((chase.dropped + T.built) / TRAIL_PERIOD) % 2;
+      const col = rainbow(Math.round((u < 1 ? u : 2 - u) * 47) / 47);
+      let b = T.buckets.get(col);
+      if (!b) T.buckets.set(col, (b = new Path2D()));
+      for (const q of [T.all, b]) {
+        q.moveTo(ch.a.x, ch.a.y);
+        q.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+      }
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const v = view.current;
+    ctx.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
+    const lw = chordWidth(v.scale, props.lineWidth);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
+    ctx.lineWidth = lw * 3.2;
+    ctx.stroke(T.all);
+    ctx.lineWidth = lw * 1.8;
+    for (const [col, b] of T.buckets) {
+      ctx.strokeStyle = col;
+      ctx.stroke(b);
+    }
+    const hd = chase.headPt;
+    ctx.beginPath();
+    ctx.arc(hd.x, hd.y, Math.max(lw * 2.4, 4 / v.scale), 0, 2 * Math.PI);
+    ctx.fillStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
+    ctx.fill();
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = '#111';
+    ctx.stroke();
+  };
+  const drawTrailRef = useRef(drawTrail);
+  drawTrailRef.current = drawTrail;
+
   // A big patch is slow to stroke, so while the view is moving a frame just
   // shifts and scales a snapshot of the last full draw; the full draw comes
   // back once the view has been still for a moment.
@@ -165,7 +231,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     ctx.fillRect(0, 0, w * dpr, h * dpr);
     ctx.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
     const px = 1 / v.scale;
-    const dim = selectedGeo !== null;
+    const dim = selectedGeo !== null || chase !== null;
     if (showTiles) {
       ctx.globalAlpha = dim ? 0.3 : 0.55;
       for (const [color, p] of geo.fills) {
@@ -194,7 +260,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       }
     }
     if (chordGeo) {
-      const lw = (props.lineWidth ?? 1) * Math.max(1.2 * px, Math.min(0.14, 4 * px));
+      const lw = chordWidth(v.scale, props.lineWidth);
       ctx.lineWidth = lw;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -232,18 +298,23 @@ export function PatchCanvas(props: PatchCanvasProps) {
       sctx.drawImage(canvas, 0, 0);
     }
     snapshot.current = { canvas: snap, view: { ...v }, ms: performance.now() - t0 };
+    drawTrail(ctx, canvas);
     reportView();
-  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow]);
+  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase]);
 
   // Tell the owner what's on screen once the view stops moving.
   const viewTimer = useRef(0);
   const lastReported = useRef('');
+  const lastReportAt = useRef(0);
   const onViewChangeRef = useRef(props.onViewChange);
   onViewChangeRef.current = props.onViewChange;
   function reportView(): void {
     if (!onViewChangeRef.current) return;
     window.clearTimeout(viewTimer.current);
+    // A view that never stops (a chase) still reports every so often.
+    const wait = performance.now() - lastReportAt.current > 600 ? 0 : 140;
     viewTimer.current = window.setTimeout(() => {
+      lastReportAt.current = performance.now();
       const v = view.current;
       const { w, h } = size.current;
       const rect = { minX: -v.tx / v.scale, minY: -v.ty / v.scale, maxX: (w - v.tx) / v.scale, maxY: (h - v.ty) / v.scale };
@@ -251,7 +322,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       if (key === lastReported.current) return;
       lastReported.current = key;
       onViewChangeRef.current?.(rect);
-    }, 140);
+    }, wait);
   }
 
   const minScale = useCallback(() => {
@@ -286,24 +357,87 @@ export function PatchCanvas(props: PatchCanvasProps) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(k, 0, 0, k, (v.tx - k * snap.view.tx) * dpr, (v.ty - k * snap.view.ty) * dpr);
     ctx.drawImage(snap.canvas, 0, 0);
+    drawTrailRef.current(ctx, canvas);
     reportView();
   }, []);
   const schedule = useCallback(() => {
     quick.current = false;
     if (!frame.current) frame.current = requestAnimationFrame(frameFn);
   }, [draw, frameFn]); // a new draw (new geometry, colours, …) is the cue for a full redraw
-  /** Redraw after a pan or zoom: from the snapshot if a full draw is slow. */
+  const scheduleRef = useRef(schedule);
+  scheduleRef.current = schedule;
+  /**
+   * Redraw after a pan or zoom: from the snapshot if a full draw is slow.
+   * Stable for the component's life, so the pointer handlers and the chase
+   * loop that use it never restart mid-gesture.
+   */
   const scheduleMove = useCallback(() => {
     if ((snapshot.current?.ms ?? 0) < 12) {
-      schedule();
+      scheduleRef.current();
       return;
     }
     quick.current = true;
     if (!frame.current) frame.current = requestAnimationFrame(frameFn);
     window.clearTimeout(settleTimer.current);
-    settleTimer.current = window.setTimeout(schedule, 160);
-  }, [schedule, frameFn]);
+    settleTimer.current = window.setTimeout(() => scheduleRef.current(), 160);
+  }, [frameFn]);
   useEffect(() => () => window.clearTimeout(settleTimer.current), []);
+
+  // The chase: walk the line on at its pace, and ride the camera along it.
+  // Dragging takes the camera back until you let go; wheel zoom stays yours.
+  const dragging = useRef(false);
+  const chaseOpts = useRef({ pace: props.chasePace ?? null, damping: props.chaseDamping ?? 1, onTick: props.onChaseTick });
+  chaseOpts.current = { pace: props.chasePace ?? null, damping: props.chaseDamping ?? 1, onTick: props.onChaseTick };
+  useEffect(() => {
+    if (!chase) return;
+    const cam = createFollowCamera(chase);
+    let last = performance.now();
+    let lastTick = 0;
+    let budget = 0;
+    let raf = 0;
+    const tick = () => {
+      const now = performance.now();
+      const dt = Math.min(100, now - last);
+      last = now;
+      raf = requestAnimationFrame(tick);
+      if (dragging.current) return;
+      const v = view.current;
+      const { w, h } = size.current;
+      const viewMin = Math.min(w, h) / v.scale;
+      const cx = (w / 2 - v.tx) / v.scale;
+      const cy = (h / 2 - v.ty) / v.scale;
+      const { pace, damping, onTick } = chaseOpts.current;
+      const before = chase.steps;
+      const until = now + 4;
+      if (pace === null) {
+        // Full speed: as far as the camera can see ahead.
+        for (let n = 0; n < 20000 && performance.now() < until; n++) {
+          const hd = chase.headPt;
+          if (Math.hypot(hd.x - cx, hd.y - cy) > 0.75 * viewMin || !chase.step()) break;
+        }
+      } else if (chase.status === 'running') {
+        budget = Math.min(budget + (pace * dt) / 1000, 2000);
+        while (budget >= 1 && performance.now() < until && chase.step()) budget--;
+        if (chase.status !== 'running') budget = 0;
+      }
+      const f = advanceFollowCamera(cam, chase, { x: cx, y: cy }, dt, viewMin, v.scale, damping);
+      if (!f.settled) view.current = { scale: v.scale, tx: w / 2 - f.cx * v.scale, ty: h / 2 - f.cy * v.scale };
+      if (!f.settled || chase.steps !== before) scheduleMove();
+      if (now - lastTick > 200 || (chase.status !== 'running' && chase.steps !== before)) {
+        lastTick = now;
+        onTick?.();
+      }
+      // Arrived at the end of a finished line: nothing left to animate.
+      if (f.settled && chase.status !== 'running') {
+        cancelAnimationFrame(raf);
+        onTick?.();
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [chase, scheduleMove]);
+  const chaseRef = useRef(chase);
+  chaseRef.current = chase;
 
   const fitBoundsRef = useRef(props.fitBounds);
   fitBoundsRef.current = props.fitBounds;
@@ -356,7 +490,10 @@ export function PatchCanvas(props: PatchCanvasProps) {
     return () => mq.removeEventListener('change', schedule);
   }, [schedule]);
 
-  // Pan / zoom / click.
+  // Pan / zoom / click. The handlers read the lines and the click callback
+  // through refs: re-attaching them on a re-render would drop a drag midway.
+  const clickRef = useRef({ circuits, onSelectPath });
+  clickRef.current = { circuits, onSelectPath };
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -409,6 +546,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       canvas.setPointerCapture(e.pointerId);
       stopGlide();
       pointers.set(e.pointerId, local(e));
+      dragging.current = true;
       moved = 0;
       vel = { vx: 0, vy: 0, t: performance.now() };
       if (pointers.size === 2) {
@@ -447,7 +585,10 @@ export function PatchCanvas(props: PatchCanvasProps) {
       const p = pointers.get(e.pointerId);
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinch = null;
-      if (p && pointers.size === 0 && moved > 6 && e.type === 'pointerup') startGlide();
+      if (pointers.size === 0) dragging.current = false;
+      // No glide while a chase has the camera: it would only fight it.
+      if (p && pointers.size === 0 && moved > 6 && e.type === 'pointerup' && !chaseRef.current) startGlide();
+      const { circuits, onSelectPath } = clickRef.current;
       if (!p || moved > 6 || !onSelectPath || !circuits) return;
       const v = view.current;
       const w = { x: (p.x - v.tx) / v.scale, y: (p.y - v.ty) / v.scale };
@@ -463,7 +604,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
           }
         }
       });
-      onSelectPath(best < 0 ? null : circuits.pathOfChord[best]);
+      onSelectPath(best < 0 ? null : circuits.pathOfChord[best], best < 0 ? null : best);
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('pointerdown', onDown);
@@ -478,7 +619,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       canvas.removeEventListener('pointerup', onUp);
       canvas.removeEventListener('pointercancel', onUp);
     };
-  }, [scheduleMove, circuits, onSelectPath]);
+  }, [scheduleMove]);
 
   return (
     <div className="patch-canvas" ref={wrapRef}>
