@@ -9,7 +9,11 @@ import type { Tiling } from './tiling';
 
 export interface ParityAnalysis {
   readonly classes: readonly number[];
-  /** Basis of the valid selections, each a sorted class list. */
+  /**
+   * Basis of the valid selections, each a sorted class list: as few edges as
+   * the enumerated selections allow, so the groups read as small loops. Every
+   * valid selection is a unique XOR of these.
+   */
   readonly basis: readonly (readonly number[])[];
   /** 2^basis.length, including the empty selection. */
   readonly count: number;
@@ -72,5 +76,67 @@ export function analyzeParity(t: Tiling, rs: RuleSet, cap = 512): ParityAnalysis
     selections.push(toList(m));
   }
   selections.sort((a, b) => a.length - b.length || a.join(',').localeCompare(b.join(',')));
-  return { classes, basis: basisMasks.map(toList), count, selections, truncated: count > lim };
+  // Greedy over the lightest selections first gives a minimum-weight basis
+  // (it's a matroid); the echelon vectors fill in whatever the cap cut off.
+  const span = new XorSpan();
+  const basis: number[][] = [];
+  const toMask = (l: readonly number[]) => l.reduce((m, c) => m | (1n << BigInt(classes.indexOf(c))), 0n);
+  for (const cand of [...selections.map(toMask), ...basisMasks]) {
+    if (basis.length === basisMasks.length) break;
+    if (span.add(cand)) basis.push(toList(cand));
+  }
+  return { classes, basis, count, selections, truncated: count > lim };
+}
+
+/** Incremental GF(2) span, remembering which inserted vectors make each row. */
+class XorSpan {
+  private readonly rows: { v: bigint; combo: bigint }[] = [];
+  private n = 0;
+
+  private reduce(v: bigint): { v: bigint; combo: bigint } {
+    let combo = 0n;
+    for (const r of this.rows) {
+      if ((v ^ r.v) < v) {
+        v ^= r.v;
+        combo ^= r.combo;
+      }
+    }
+    return { v, combo };
+  }
+
+  /** Adds v; false (and nothing added) if it is already in the span. */
+  add(v: bigint): boolean {
+    const r = this.reduce(v);
+    if (r.v === 0n) return false;
+    this.rows.push({ v: r.v, combo: r.combo ^ (1n << BigInt(this.n++)) });
+    // Keep rows sorted by leading bit, highest first, so reduce() works in one pass.
+    this.rows.sort((a, b) => (a.v > b.v ? -1 : a.v < b.v ? 1 : 0));
+    return true;
+  }
+
+  /** Which inserted vectors XOR to v, or null if v is outside the span. */
+  coords(v: bigint): bigint | null {
+    const r = this.reduce(v);
+    return r.v === 0n ? r.combo : null;
+  }
+}
+
+/**
+ * How a selection decomposes over the basis: one flag per basis group, or
+ * null when the selection isn't tail-free (so it isn't in their span).
+ */
+export function basisCoords(par: ParityAnalysis, sel: ReadonlySet<number>): boolean[] | null {
+  const toMask = (l: Iterable<number>) => {
+    let m = 0n;
+    for (const c of l) {
+      const i = par.classes.indexOf(c);
+      if (i >= 0) m |= 1n << BigInt(i);
+    }
+    return m;
+  };
+  const span = new XorSpan();
+  for (const b of par.basis) span.add(toMask(b));
+  if ([...sel].some((c) => !par.classes.includes(c))) return null;
+  const combo = span.coords(toMask(sel));
+  return combo === null ? null : par.basis.map((_, i) => (combo & (1n << BigInt(i))) !== 0n);
 }

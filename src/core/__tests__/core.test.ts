@@ -14,7 +14,7 @@ import {
   splitBefore,
   validateRuleSet,
 } from '../ruleset';
-import { analyzeParity } from '../parity';
+import { analyzeParity, basisCoords } from '../parity';
 import { catalan, nonCrossingMatchings } from '../matchings';
 import { computeCircuits } from '../circuits';
 import { refineSpec, similarityTiling, instancePts } from '../tiling';
@@ -69,6 +69,18 @@ describe('rule sets', () => {
   it('hexagon labels give the eight tail-free selections from the Spectre project', () => {
     const par = analyzeParity(hexTiling, preset(hexTiling));
     expect(par.selections.map((s) => s.join(''))).toEqual(['', '15', '128', '258', '01346', '03456', '023468', '01234568']);
+  });
+
+  it('the basis is the lightest groups, and every tail-free selection decomposes over it', () => {
+    const par = analyzeParity(hexTiling, preset(hexTiling));
+    expect(par.basis.map((s) => s.join(''))).toEqual(['15', '128', '01346']);
+    expect(basisCoords(par, new Set([2, 5, 8]))).toEqual([true, true, false]);
+    expect(basisCoords(par, new Set([1]))).toBeNull();
+    for (const t of BUILTIN_TILINGS) {
+      const p = analyzeParity(t, derivedRuleSet(t, 'edges'));
+      expect(2 ** p.basis.length).toBe(p.count);
+      for (const s of p.selections) expect(basisCoords(p, new Set(s)), `${t.id} ${s}`).not.toBeNull();
+    }
   });
 
   it('labels parse into seams, wrapping round the end', () => {

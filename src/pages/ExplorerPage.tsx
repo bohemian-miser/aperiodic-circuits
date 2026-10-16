@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { computeCircuits, type CircuitResult } from '../core/circuits';
 import { choiceCount, MAX_ENUMERATED_CROSSINGS } from '../core/matchings';
-import { analyzeParity, crossingCounts } from '../core/parity';
+import { analyzeParity, basisCoords, crossingCounts } from '../core/parity';
 import { className, computeAdjacency, ruleSetClasses, type RuleSet } from '../core/ruleset';
 import { decodeShare, encodeShare } from '../core/share';
 import { getTiling } from '../core/tilings';
@@ -120,6 +120,7 @@ export function ExplorerPage({ route }: Props) {
 
   const classes = useMemo(() => ruleSetClasses(ruleSet), [ruleSet]);
   const parity = useMemo(() => analyzeParity(tiling, ruleSet, 256), [tiling, ruleSet]);
+  const coords = useMemo(() => basisCoords(parity, selection), [parity, selection]);
   const counts = useMemo(() => crossingCounts(tiling, ruleSet, selection), [tiling, ruleSet, selection]);
   const infinite = infiniteOn && supportsInfinite(tiling);
   const plane = useMemo(() => (infinite ? new InfinitePlane(tiling, root, seed) : null), [infinite, tiling, root, seed]);
@@ -202,6 +203,15 @@ export function ExplorerPage({ route }: Props) {
     const next = new Set(selection);
     if (next.has(c)) next.delete(c);
     else next.add(c);
+    setSelection(next);
+  };
+  // XOR a whole basis group in: shared classes cancel, so parity is kept.
+  const toggleGroup = (g: readonly number[]) => {
+    const next = new Set(selection);
+    for (const c of g) {
+      if (next.has(c)) next.delete(c);
+      else next.add(c);
+    }
     setSelection(next);
   };
 
@@ -471,6 +481,25 @@ export function ExplorerPage({ route }: Props) {
           <p className={`status ${isTailFree ? 'good' : 'bad'}`}>
             {isTailFree ? 'Tail-free: every tile has an even number of crossings.' : `Odd crossings on ${circuits.oddTypes.join(', ')}.`}
           </p>
+          {parity.basis.length > 0 && (
+            <>
+              <p className="hint">
+                Basis groups: tap one to flip all its edges together. Any mix of groups is tail-free, and each of the{' '}
+                {parity.count.toLocaleString()} tail-free selections is exactly one mix.
+              </p>
+              <div className="chips small">
+                {parity.basis.map((g, i) => {
+                  const label = g.map((c) => className(ruleSet, c)).join(ruleSet.classNames ? ',' : '·');
+                  const on = coords?.[i] ?? false;
+                  return (
+                    <button type="button" key={label} className={`chip plain${on ? ' on' : ''}`} onClick={() => toggleGroup(g)} aria-pressed={on}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
           <details open={parity.count <= 64}>
             <summary>
               {parity.count.toLocaleString()} tail-free selection{parity.count === 1 ? '' : 's'}
