@@ -30,15 +30,16 @@ export interface RuleSet {
   readonly notes?: string;
 }
 
-export const MAX_CLASSES = 36;
-const DIGITS = '0123456789abcdefghijklmnopqrstuvwxyz';
+/** Classes are written 0-9, a-z, then A-Z (so share strings stay one character per class). */
+export const MAX_CLASSES = 62;
+const DIGITS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 export function classChar(c: number): string {
   return DIGITS[c] ?? '?';
 }
 
 export function classFromChar(ch: string): number {
-  return DIGITS.indexOf(ch.toLowerCase());
+  return DIGITS.indexOf(ch);
 }
 
 export function className(rs: RuleSet, c: number): string {

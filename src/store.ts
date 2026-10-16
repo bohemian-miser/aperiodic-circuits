@@ -5,8 +5,8 @@
  */
 
 import { derivedRuleSet, type RuleSet } from './core/ruleset';
-import { validateSimilaritySpec, type SimilaritySpec, type Tiling } from './core/tiling';
-import { allTilings, getTiling, registerCustomTiling } from './core/tilings';
+import type { Tiling, TilingSpec } from './core/tiling';
+import { allTilings, getTiling, registerCustomTiling, validateTilingSpec } from './core/tilings';
 
 const RS_KEY = 'aperiodic-circuits:rulesets';
 const TILING_KEY = 'aperiodic-circuits:tilings';
@@ -29,7 +29,7 @@ function writeJson(key: string, value: unknown): void {
 }
 
 let userRuleSets: RuleSet[] = [];
-let userSpecs: SimilaritySpec[] = [];
+let userSpecs: TilingSpec[] = [];
 const listeners = new Set<() => void>();
 
 export function subscribe(f: () => void): () => void {
@@ -45,7 +45,7 @@ let loaded = false;
 export function loadPersisted(): void {
   if (loaded) return;
   loaded = true;
-  userSpecs = readJson<SimilaritySpec[]>(TILING_KEY, []).filter((s) => validateSimilaritySpec(s).length === 0);
+  userSpecs = readJson<TilingSpec[]>(TILING_KEY, []).filter((s) => validateTilingSpec(s).length === 0);
   for (const s of userSpecs) {
     try {
       if (!getTiling(s.id)) registerCustomTiling(s);
@@ -132,7 +132,7 @@ export function deleteRuleSet(id: string): void {
 }
 
 /** Register and persist a custom tiling. */
-export function addTilingSpec(spec: SimilaritySpec): Tiling {
+export function addTilingSpec(spec: TilingSpec): Tiling {
   const existing = getTiling(spec.id);
   if (existing) return existing;
   const t = registerCustomTiling(spec);
@@ -154,7 +154,7 @@ export interface Bundle {
   readonly format: 'aperiodic-circuits/rule-set@1';
   readonly ruleSet: RuleSet;
   /** Present when the rule set's tiling isn't built in. */
-  readonly tiling?: SimilaritySpec;
+  readonly tiling?: TilingSpec;
 }
 
 export function makeBundle(rs: RuleSet): Bundle {
@@ -167,7 +167,7 @@ export function makeBundle(rs: RuleSet): Bundle {
 export function openBundle(b: Bundle): RuleSet {
   if (b.format !== 'aperiodic-circuits/rule-set@1' || !b.ruleSet?.tilingId || !b.ruleSet.seams) throw new Error('Not an Aperiodic Circuits rule set file');
   if (b.tiling) {
-    const errs = validateSimilaritySpec(b.tiling);
+    const errs = validateTilingSpec(b.tiling);
     if (errs.length) throw new Error(`Bad tiling: ${errs.join('; ')}`);
     addTilingSpec(b.tiling);
   }

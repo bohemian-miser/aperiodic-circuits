@@ -11,7 +11,8 @@ The [Spectre circuits](https://github.com/bohemian-miser/Spectre) idea, opened u
 ## Pages
 
 * **Explorer** (`#/explore`): grow a patch of any tiling, pick the classes that carry a line, and pick a pairing per tile. Circuits are coloured by length, open lines run red to violet along their length, and tails are red. Click a line to pick it out. The **survey** runs every combination of the current selection on a smaller patch and tabulates circuits, distinct lengths, longest circuit and open lines.
-* **Rule-set builder** (`#/build`): paint classes onto prototile edges, join or split seams, rename classes, and see straight away whether the labelling is consistent and how many edge selections are tail-free. Save rule sets in the browser, export or import them as JSON, or open them in the explorer with a link that carries the whole rule set.
+* **Substitution lab** (`#/lab`): stage one, build the supertile rules. Switch cells on a hexagon or square grid on and off to make the slots, give each of your types (three to start) a child type per slot, turned and flipped as you like, and pick an expansion map. It checks levels 1–4 for overlaps and holes (exact, since every tile stays on the grid) and shows the substitution matrix, growth and primitivity. Then send it on to number the edges.
+* **Edge builder** (`#/build`): paint classes onto prototile edges, join or split seams, rename classes, and see straight away whether the labelling is consistent and how many edge selections are tail-free. **Help me number the edges** reports how many tile edges always meet the same neighbour and suggests numberings: greedy merges of the finest classes that keep the most tail-free selections, or random merges, all consistent by construction. Save rule sets in the browser, export or import them as JSON, or open them in the explorer with a link that carries the whole rule set.
 * **About** (`#/about`): the definitions and the tiling JSON format.
 
 <table>
@@ -42,6 +43,8 @@ The [Spectre circuits](https://github.com/bohemian-miser/Spectre) idea, opened u
 ```
 src/core/          the engine, no React
   tiling.ts        prototiles, similarity substitutions (JSON), refinement
+  lattice.ts       Substitution-lab grids: slots, orientations, expansion maps, overlap/hole checks
+  suggest.ts       edge-numbering suggestions and the neighbour report
   tilings/         the built-in tilings (spectre.ts ports the Spectre project's supertile construction)
   ruleset.ts       seams, adjacency, deriving classes, validation, editing
   matchings.ts     non-crossing pairings
