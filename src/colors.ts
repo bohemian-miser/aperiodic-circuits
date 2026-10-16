@@ -10,7 +10,8 @@ export function lengthHue(rank: number): string {
   return `hsl(${((rank * 47) % 360).toFixed(0)} 80% 45%)`;
 }
 
-export const OPEN_COLOR = '#5b6b82';
+// Mid blue-grey: readable on both the light and the dark canvas.
+export const OPEN_COLOR = '#6f86b0';
 export const TAIL_COLOR = '#e5484d';
 
 /** Red through violet, t in [0, 1]. */
