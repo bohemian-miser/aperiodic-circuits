@@ -85,6 +85,12 @@ export function AboutPage() {
         survey tries every combination of the current selection on a smaller patch and tabulates circuits, distinct lengths, the longest circuit, and
         open lines. Open lines leave the patch, so a combination with many of them, and few circuits, is a candidate for infinite lines.
       </p>
+      <p>
+        Switch the patch to <em>Infinite</em> to see the whole plane instead of one supertile. As in the Spectre project, a tile is anchored at the
+        centre and its ancestors are chosen one level at a time going up (at random from the seed, weighted by how common each type is), and only the
+        supertiles that touch the view are opened up. Pan as far as you like; tiles never move once placed. Click a line to trace it in a rainbow, and
+        it stays picked as you follow it. This works for every tiling here, including ones built in the lab.
+      </p>
 
       <h2>Tiling JSON</h2>
       <pre className="mono">{`{
