@@ -5,6 +5,8 @@ import { analyzeParity, crossingCounts } from '../core/parity';
 import { className, computeAdjacency, ruleSetClasses, type RuleSet } from '../core/ruleset';
 import { decodeShare, encodeShare } from '../core/share';
 import { getTiling } from '../core/tilings';
+import { InfinitePlane, meanTileArea, supportsInfinite, type Rect } from '../core/infinite';
+import { qkey } from '../core/polygon';
 import type { Tiling } from '../core/tiling';
 import { PatchCanvas, pathColors } from '../components/PatchCanvas';
 import { TileGlyph } from '../components/TileGlyph';
@@ -69,7 +71,12 @@ export function ExplorerPage({ route }: Props) {
   }, []);
   const [selection, setSelection] = useState<ReadonlySet<number>>(() => new Set(initialShare?.selection ?? firstGoodSelection(tiling, ruleSet)));
   const [combo, setCombo] = useState<Record<string, number>>(() => initialShare?.combo ?? {});
-  const [selectedPath, setSelectedPath] = useState<number | null>(null);
+  // The picked line is remembered by a point on it, so it survives the patch
+  // being regrown (infinite mode regrows on every pan).
+  const [pickedAt, setPickedAt] = useState<readonly string[] | null>(null);
+  const [infiniteOn, setInfiniteOn] = useState(() => p.get('inf') === '1');
+  const [seed, setSeed] = useState(() => Math.max(1, Number(p.get('seed')) || 1));
+  const [viewRect, setViewRect] = useState<Rect>(INITIAL_VIEW);
   const [showBackground, setShowBackground] = useStoredFlag('background', true);
   const [showTiles, setShowTiles] = useStoredFlag('tile-colours', true);
   const [rainbowLines, setRainbowLines] = useStoredFlag('rainbow-lines', true);
@@ -97,23 +104,67 @@ export function ExplorerPage({ route }: Props) {
   const classes = useMemo(() => ruleSetClasses(ruleSet), [ruleSet]);
   const parity = useMemo(() => analyzeParity(tiling, ruleSet, 256), [tiling, ruleSet]);
   const counts = useMemo(() => crossingCounts(tiling, ruleSet, selection), [tiling, ruleSet, selection]);
-  const instances = useMemo(() => tiling.generate(level, root), [tiling, level, root]);
+  const infinite = infiniteOn && supportsInfinite(tiling);
+  const plane = useMemo(() => (infinite ? new InfinitePlane(tiling, root, seed) : null), [infinite, tiling, root, seed]);
+  const instances = useMemo(() => {
+    if (!plane) return tiling.generate(level, root);
+    // Grow a margin past the screen so a short pan doesn't show an edge.
+    const w = viewRect.maxX - viewRect.minX;
+    const h = viewRect.maxY - viewRect.minY;
+    const rect = { minX: viewRect.minX - w * 0.15, minY: viewRect.minY - h * 0.15, maxX: viewRect.maxX + w * 0.15, maxY: viewRect.maxY + h * 0.15 };
+    return plane.query(rect, INFINITE_MAX_TILES).instances;
+  }, [plane, tiling, level, root, viewRect]);
   const adjacency = useMemo(() => computeAdjacency(tiling, instances), [tiling, instances]);
   const circuits: CircuitResult = useMemo(
     () => computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }),
     [tiling, ruleSet, instances, selection, combo, adjacency],
   );
-  useEffect(() => setSelectedPath(null), [circuits]);
+  useEffect(() => setPickedAt(null), [tiling, ruleSet, root, seed, infinite]);
+  const selectedPath = useMemo(() => {
+    if (!pickedAt) return null;
+    const want = new Set(pickedAt);
+    for (let i = 0; i < circuits.chords.length; i++) {
+      const ch = circuits.chords[i];
+      if (want.has(qkey(ch.a, 1e3)) || want.has(qkey(ch.b, 1e3))) return circuits.pathOfChord[i];
+    }
+    return null;
+  }, [pickedAt, circuits]);
+  // Remember points spread along the picked line, densest near the middle of
+  // the view, so some of them are still inside the patch after the next pan
+  // regrows it. When none are (panned well away), the pick waits, and comes
+  // back if you return.
+  useEffect(() => {
+    if (!infinite || selectedPath === null) return;
+    const chords = circuits.paths[selectedPath].chords;
+    const cx = (viewRect.minX + viewRect.maxX) / 2;
+    const cy = (viewRect.minY + viewRect.maxY) / 2;
+    const byDist = [...chords].sort((i, j) => {
+      const a = circuits.chords[i].a;
+      const b = circuits.chords[j].a;
+      return (a.x - cx) ** 2 + (a.y - cy) ** 2 - ((b.x - cx) ** 2 + (b.y - cy) ** 2);
+    });
+    const step = Math.max(1, Math.floor(chords.length / 32));
+    const keys = new Set<string>();
+    for (const ci of byDist.slice(0, 16)) keys.add(qkey(circuits.chords[ci].a, 1e3));
+    for (let k = 0; k < chords.length; k += step) keys.add(qkey(circuits.chords[chords[k]].a, 1e3));
+    const next = [...keys].sort();
+    if (!pickedAt || next.join() !== [...pickedAt].sort().join()) setPickedAt(next);
+  }, [infinite, selectedPath, circuits, viewRect, pickedAt]);
+
+  const setSelectedPath = (pi: number | null) => {
+    const first = pi === null ? undefined : circuits.paths[pi]?.chords[0];
+    setPickedAt(first === undefined ? null : [qkey(circuits.chords[first].a, 1e3)]);
+  };
 
   const share = encodeShare(selection, combo, types);
   const isTailFree = circuits.oddTypes.length === 0;
 
   // Keep the URL in step (without spamming history).
   useEffect(() => {
-    const params: Record<string, string | number | undefined> = { t: tiling.id, rs: ruleSet.id, lv: level, root, s: share };
+    const params: Record<string, string | number | undefined> = { t: tiling.id, rs: ruleSet.id, lv: level, root, s: share, inf: infinite ? 1 : undefined, seed: infinite && seed !== 1 ? seed : undefined };
     if (embedded && embedded.id === ruleSet.id) params.rsd = p.get('rsd') ?? undefined;
     replaceHash(hashFor('explore', params));
-  }, [tiling.id, ruleSet.id, level, root, share, embedded, p]);
+  }, [tiling.id, ruleSet.id, level, root, share, embedded, p, infinite, seed]);
 
   const toggleClass = (c: number) => {
     const next = new Set(selection);
@@ -150,6 +201,10 @@ export function ExplorerPage({ route }: Props) {
   const [copied, setCopied] = useState(false);
   const copyLink = async () => {
     const params: Record<string, string | number> = { t: tiling.id, rs: ruleSet.id, lv: level, root, s: share };
+    if (infinite) {
+      params.inf = 1;
+      if (seed !== 1) params.seed = seed;
+    }
     // Rule sets that only live in this browser travel inside the link.
     if (isUserRuleSet(ruleSet.id) || embedded?.id === ruleSet.id) params.rsd = toBase64Url(JSON.stringify(makeBundle(ruleSet)));
     const url = `${location.origin}${location.pathname}${hashFor('explore', params)}`;
@@ -228,15 +283,48 @@ export function ExplorerPage({ route }: Props) {
 
         <section>
           <h2>Patch</h2>
-          <label className="field">
-            <span>
-              Level <b>{level}</b> <small>({instances.length.toLocaleString()} tiles)</small>
-            </span>
-            <input type="range" min={0} max={tiling.maxLevel} value={level} onChange={(e) => setLevel(Number(e.target.value))} />
-          </label>
+          <div className="row">
+            <button type="button" className={!infinite ? 'on' : ''} onClick={() => setInfiniteOn(false)} aria-pressed={!infinite}>
+              Supertile
+            </button>
+            <button
+              type="button"
+              className={infinite ? 'on' : ''}
+              onClick={() => setInfiniteOn(true)}
+              aria-pressed={infinite}
+              disabled={!supportsInfinite(tiling)}
+              title={supportsInfinite(tiling) ? 'The whole plane, grown around the view as you pan' : 'This tiling has no substitution tree to grow from'}
+            >
+              Infinite
+            </button>
+          </div>
+          {infinite ? (
+            <>
+              <p className="hint">
+                The whole plane, grown around the view as you pan ({instances.length.toLocaleString()} tiles in view). Click a line to trace it: it stays
+                picked, in a rainbow, as you follow it.
+              </p>
+              <div className="row">
+                <label className="field inline">
+                  <span>Seed</span>
+                  <input type="number" min={1} value={seed} onChange={(e) => setSeed(Math.max(1, Math.floor(Number(e.target.value)) || 1))} style={{ width: 90 }} />
+                </label>
+                <button type="button" onClick={() => setSeed(1 + Math.floor(Math.random() * 1e6))} title="A different tiling of the plane">
+                  New tiling
+                </button>
+              </div>
+            </>
+          ) : (
+            <label className="field">
+              <span>
+                Level <b>{level}</b> <small>({instances.length.toLocaleString()} tiles)</small>
+              </span>
+              <input type="range" min={0} max={tiling.maxLevel} value={level} onChange={(e) => setLevel(Number(e.target.value))} />
+            </label>
+          )}
           {tiling.roots.length > 1 && (
             <label className="field">
-              <span>Grow from</span>
+              <span>{infinite ? 'Tile at the centre' : 'Grow from'}</span>
               <select value={root} onChange={(e) => setRoot(e.target.value)}>
                 {tiling.roots.map((r) => (
                   <option key={r} value={r}>
@@ -378,6 +466,11 @@ export function ExplorerPage({ route }: Props) {
           selectedPath={selectedPath}
           onSelectPath={setSelectedPath}
           lineWidth={lineWidth}
+          fitKey={infinite ? plane : undefined}
+          fitBounds={infinite ? INITIAL_VIEW : undefined}
+          onViewChange={infinite ? setViewRect : undefined}
+          zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: INFINITE_SCREEN_TILES } : undefined}
+          selectedRainbow={infinite}
         />
         <div className="stats">
           <span>
@@ -407,7 +500,8 @@ export function ExplorerPage({ route }: Props) {
           )}
           {sel && (
             <span className="picked">
-              Picked: {sel.closed ? 'circuit' : sel.ends.includes('tail') ? 'line with a tail' : 'open line (leaves the patch)'}, {sel.chords.length} segments
+              Picked: {sel.closed ? 'circuit' : sel.ends.includes('tail') ? 'line with a tail' : infinite ? 'line, runs off screen' : 'open line (leaves the patch)'}, {sel.chords.length} segments
+              {infinite && !sel.closed ? ' so far' : ''}
             </span>
           )}
         </div>
@@ -416,6 +510,13 @@ export function ExplorerPage({ route }: Props) {
     </div>
   );
 }
+
+/** Infinite mode starts looking at this window round the centre tile. */
+const INITIAL_VIEW: Rect = { minX: -16, minY: -16, maxX: 16, maxY: 16 };
+/** Zoom-out stops at about this many tiles on screen… */
+const INFINITE_SCREEN_TILES = 9000;
+/** …and a query never returns more than this (screen plus margin). */
+const INFINITE_MAX_TILES = 40000;
 
 interface SurveyProps {
   readonly tiling: Tiling;

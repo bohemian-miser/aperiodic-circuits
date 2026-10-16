@@ -19,6 +19,23 @@ export interface PatchCanvasProps {
   readonly selectedPath?: number | null;
   readonly onSelectPath?: (path: number | null) => void;
   readonly lineWidth?: number;
+  /** Re-fit the view when this changes (default: whenever the patch changes). */
+  readonly fitKey?: unknown;
+  /** What to fit to (default: the whole patch). */
+  readonly fitBounds?: WorldRect;
+  /** Called (debounced) with the world rectangle on screen after the view settles. */
+  readonly onViewChange?: (rect: WorldRect) => void;
+  /** Stop zooming out once roughly this many tiles of this area would be on screen. */
+  readonly zoomLimit?: { readonly tileArea: number; readonly maxTiles: number };
+  /** Draw the picked line as a rainbow from end to end (infinite mode's traced strand). */
+  readonly selectedRainbow?: boolean;
+}
+
+export interface WorldRect {
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
 }
 
 interface View {
@@ -112,12 +129,20 @@ export function PatchCanvas(props: PatchCanvasProps) {
   const selectedGeo = useMemo(() => {
     if (!circuits || selectedPath === null || !circuits.paths[selectedPath]) return null;
     const p = new Path2D();
-    for (const ci of circuits.paths[selectedPath].chords) {
+    const chords = circuits.paths[selectedPath].chords;
+    // Rainbow buckets along the line, in walk order.
+    const buckets = new Map<string, Path2D>();
+    chords.forEach((ci, k) => {
       const ch = circuits.chords[ci];
       p.moveTo(ch.a.x, ch.a.y);
       p.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
-    }
-    return p;
+      const col = rainbow(chords.length > 1 ? Math.round((k / (chords.length - 1)) * 63) / 63 : 0);
+      let b = buckets.get(col);
+      if (!b) buckets.set(col, (b = new Path2D()));
+      b.moveTo(ch.a.x, ch.a.y);
+      b.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+    });
+    return { all: p, buckets };
   }, [circuits, selectedPath]);
 
   const draw = useCallback(() => {
@@ -176,24 +201,63 @@ export function PatchCanvas(props: PatchCanvasProps) {
       if (selectedGeo) {
         ctx.strokeStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
         ctx.lineWidth = lw * 3.2;
-        ctx.stroke(selectedGeo);
-        ctx.strokeStyle = chordGeo.colors[selectedPath!] ?? '#000';
+        ctx.stroke(selectedGeo.all);
         ctx.lineWidth = lw * 1.8;
-        ctx.stroke(selectedGeo);
+        if (props.selectedRainbow) {
+          for (const [col, b] of selectedGeo.buckets) {
+            ctx.strokeStyle = col;
+            ctx.stroke(b);
+          }
+        } else {
+          ctx.strokeStyle = chordGeo.colors[selectedPath!] ?? '#000';
+          ctx.stroke(selectedGeo.all);
+        }
       }
     }
-  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth]);
+    reportView();
+  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow]);
+
+  // Tell the owner what's on screen once the view stops moving.
+  const viewTimer = useRef(0);
+  const lastReported = useRef('');
+  const onViewChangeRef = useRef(props.onViewChange);
+  onViewChangeRef.current = props.onViewChange;
+  function reportView(): void {
+    if (!onViewChangeRef.current) return;
+    window.clearTimeout(viewTimer.current);
+    viewTimer.current = window.setTimeout(() => {
+      const v = view.current;
+      const { w, h } = size.current;
+      const rect = { minX: -v.tx / v.scale, minY: -v.ty / v.scale, maxX: (w - v.tx) / v.scale, maxY: (h - v.ty) / v.scale };
+      const key = [rect.minX, rect.minY, rect.maxX, rect.maxY].map((x) => x.toFixed(3)).join(',');
+      if (key === lastReported.current) return;
+      lastReported.current = key;
+      onViewChangeRef.current?.(rect);
+    }, 140);
+  }
+
+  const minScale = useCallback(() => {
+    const zl = props.zoomLimit;
+    if (!zl) return 1e-3;
+    const { w, h } = size.current;
+    return Math.sqrt((w * h) / (zl.maxTiles * zl.tileArea));
+  }, [props.zoomLimit]);
+  const minScaleRef = useRef(minScale);
+  minScaleRef.current = minScale;
+
 
   const schedule = useCallback(() => {
     if (!frame.current) frame.current = requestAnimationFrame(draw);
   }, [draw]);
 
+  const fitBoundsRef = useRef(props.fitBounds);
+  fitBoundsRef.current = props.fitBounds;
   const fit = useCallback(() => {
     const { w, h } = size.current;
-    const b = geo.bounds;
+    const b = fitBoundsRef.current ?? geo.bounds;
     const bw = Math.max(1e-6, b.maxX - b.minX);
     const bh = Math.max(1e-6, b.maxY - b.minY);
-    const scale = 0.94 * Math.min(w / bw, h / bh);
+    const scale = Math.max(minScaleRef.current(), 0.94 * Math.min(w / bw, h / bh));
     view.current = { scale, tx: w / 2 - scale * (b.minX + bw / 2), ty: h / 2 - scale * (b.minY + bh / 2) };
     schedule();
   }, [geo, schedule]);
@@ -219,10 +283,13 @@ export function PatchCanvas(props: PatchCanvasProps) {
     return () => ro.disconnect();
   }, [fit, schedule]);
 
-  // Re-fit when the patch changes; redraw for everything else.
+  // Re-fit when the patch changes (or whatever `fitKey` says); redraw for everything else.
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
+  const fitKey = props.fitKey === undefined ? geo.bounds : props.fitKey;
   useEffect(() => {
-    if (size.current.w > 1) fit();
-  }, [geo.bounds, fit]);
+    if (size.current.w > 1) fitRef.current();
+  }, [fitKey]);
   useEffect(() => {
     schedule();
   }, [schedule]);
@@ -247,7 +314,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     };
     const zoomAt = (x: number, y: number, k: number) => {
       const v = view.current;
-      const s = Math.max(1e-3, Math.min(1e5, v.scale * k));
+      const s = Math.max(minScaleRef.current(), Math.min(1e5, v.scale * k));
       const kk = s / v.scale;
       view.current = { scale: s, tx: x - (x - v.tx) * kk, ty: y - (y - v.ty) * kk };
       schedule();
@@ -328,15 +395,16 @@ export function PatchCanvas(props: PatchCanvasProps) {
       <canvas ref={canvasRef} aria-label={`${tiling.name} patch`} />
       <div className="canvas-tools">
         <button type="button" onClick={() => zoomBy(view, size.current, 1.4, schedule)} aria-label="Zoom in">+</button>
-        <button type="button" onClick={() => zoomBy(view, size.current, 1 / 1.4, schedule)} aria-label="Zoom out">−</button>
+        <button type="button" onClick={() => zoomBy(view, size.current, 1 / 1.4, schedule, minScaleRef.current())} aria-label="Zoom out">−</button>
         <button type="button" onClick={fit} aria-label="Fit to view">Fit</button>
       </div>
     </div>
   );
 }
 
-function zoomBy(view: { current: View }, size: { w: number; h: number }, k: number, schedule: () => void) {
+function zoomBy(view: { current: View }, size: { w: number; h: number }, k0: number, schedule: () => void, min = 1e-3) {
   const v = view.current;
+  const k = Math.max(min, v.scale * k0) / v.scale;
   const x = size.w / 2;
   const y = size.h / 2;
   view.current = { scale: v.scale * k, tx: x - (x - v.tx) * k, ty: y - (y - v.ty) * k };
