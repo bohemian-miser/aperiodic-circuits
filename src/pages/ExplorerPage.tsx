@@ -70,7 +70,9 @@ export function ExplorerPage({ route }: Props) {
   const [selection, setSelection] = useState<ReadonlySet<number>>(() => new Set(initialShare?.selection ?? firstGoodSelection(tiling, ruleSet)));
   const [combo, setCombo] = useState<Record<string, number>>(() => initialShare?.combo ?? {});
   const [selectedPath, setSelectedPath] = useState<number | null>(null);
-  const [showTiles, setShowTiles] = useState(true);
+  const [showBackground, setShowBackground] = useStoredFlag('background', true);
+  const [showTiles, setShowTiles] = useStoredFlag('tile-colours', true);
+  const [rainbowLines, setRainbowLines] = useStoredFlag('rainbow-lines', true);
   const [showClassEdges, setShowClassEdges] = useState(false);
   const [lineWidth, setLineWidth] = useState(1);
 
@@ -245,8 +247,14 @@ export function ExplorerPage({ route }: Props) {
             </label>
           )}
           <div className="checks">
+            <label title="The tiling behind the lines: tile colours and outlines">
+              <input type="checkbox" checked={showBackground} onChange={(e) => setShowBackground(e.target.checked)} /> Background
+            </label>
             <label>
-              <input type="checkbox" checked={showTiles} onChange={(e) => setShowTiles(e.target.checked)} /> Tiles
+              <input type="checkbox" checked={showTiles} disabled={!showBackground} onChange={(e) => setShowTiles(e.target.checked)} /> Tile colours
+            </label>
+            <label title="Colour open lines red to violet along their length">
+              <input type="checkbox" checked={rainbowLines} onChange={(e) => setRainbowLines(e.target.checked)} /> Rainbow lines
             </label>
             <label>
               <input type="checkbox" checked={showClassEdges} onChange={(e) => setShowClassEdges(e.target.checked)} /> Selected edges
@@ -363,7 +371,9 @@ export function ExplorerPage({ route }: Props) {
           instances={instances}
           ruleSet={ruleSet}
           circuits={circuits}
-          showTiles={showTiles}
+          showTiles={showBackground && showTiles}
+          showOutlines={showBackground}
+          rainbowLines={rainbowLines}
           classEdges={showClassEdges ? selection : null}
           selectedPath={selectedPath}
           onSelectPath={setSelectedPath}
@@ -527,4 +537,26 @@ function Survey({ tiling, ruleSet, selection, counts, onPick }: SurveyProps) {
       )}
     </section>
   );
+}
+
+/** A display toggle remembered in this browser. */
+function useStoredFlag(name: string, initial: boolean): [boolean, (v: boolean) => void] {
+  const key = `aperiodic-circuits:view:${name}`;
+  const [value, setValue] = useState(() => {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? initial : v === '1';
+    } catch {
+      return initial;
+    }
+  });
+  const set = (v: boolean) => {
+    setValue(v);
+    try {
+      localStorage.setItem(key, v ? '1' : '0');
+    } catch {
+      /* private window: just don't remember */
+    }
+  };
+  return [value, set];
 }

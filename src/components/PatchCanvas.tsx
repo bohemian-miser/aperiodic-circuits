@@ -12,6 +12,8 @@ export interface PatchCanvasProps {
   readonly circuits?: CircuitResult;
   readonly showTiles?: boolean;
   readonly showOutlines?: boolean;
+  /** Colour open lines red-to-violet along their length (otherwise one flat colour). */
+  readonly rainbowLines?: boolean;
   /** Stroke edges in their class colour (only the classes given, if any). */
   readonly classEdges?: ReadonlySet<number> | 'all' | null;
   readonly selectedPath?: number | null;
@@ -42,7 +44,7 @@ export function pathColors(r: CircuitResult): string[] {
 }
 
 export function PatchCanvas(props: PatchCanvasProps) {
-  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, classEdges = null, selectedPath = null, onSelectPath } = props;
+  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 });
@@ -91,7 +93,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     // Open lines (the candidates for infinite ones) run through a rainbow
     // from one end to the other, so you can see where a long one goes.
     const chordColor: string[] = circuits.chords.map((_, i) => colors[circuits.pathOfChord[i]] ?? OPEN_COLOR);
-    for (const path of circuits.paths) {
+    for (const path of rainbowLines ? circuits.paths : []) {
       if (path.closed || path.ends.includes('tail') || path.chords.length < 2) continue;
       const n = path.chords.length;
       path.chords.forEach((ci, k) => (chordColor[ci] = rainbow(Math.round((k / (n - 1)) * 47) / 47)));
@@ -105,7 +107,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       p.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
     });
     return { byColor, colors };
-  }, [circuits]);
+  }, [circuits, rainbowLines]);
 
   const selectedGeo = useMemo(() => {
     if (!circuits || selectedPath === null || !circuits.paths[selectedPath]) return null;
