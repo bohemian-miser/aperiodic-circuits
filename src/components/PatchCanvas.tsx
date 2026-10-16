@@ -82,8 +82,9 @@ export function PatchCanvas(props: PatchCanvasProps) {
       let f = fills.get(proto.color);
       if (!f) fills.set(proto.color, (f = new Path2D()));
       f.moveTo(pts[0].x, pts[0].y);
+      // No closePath: fill closes each subpath anyway, and closePath gets slow
+      // on a Path2D holding tens of thousands of them.
       for (let i = 1; i < pts.length; i++) f.lineTo(pts[i].x, pts[i].y);
-      f.closePath();
       const hid = proto.hiddenEdges;
       const soe = seamIdx.get(inst.type);
       for (let e = 0; e < pts.length; e++) {
@@ -145,12 +146,17 @@ export function PatchCanvas(props: PatchCanvasProps) {
     return { all: p, buckets };
   }, [circuits, selectedPath]);
 
+  // A big patch is slow to stroke, so while the view is moving a frame just
+  // shifts and scales a snapshot of the last full draw; the full draw comes
+  // back once the view has been still for a moment.
+  const snapshot = useRef<{ canvas: HTMLCanvasElement; view: View; ms: number } | null>(null);
   const draw = useCallback(() => {
     frame.current = 0;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const t0 = performance.now();
     const dpr = window.devicePixelRatio || 1;
     const { w, h } = size.current;
     const v = view.current;
@@ -214,6 +220,18 @@ export function PatchCanvas(props: PatchCanvasProps) {
         }
       }
     }
+    const snap = snapshot.current?.canvas ?? document.createElement('canvas');
+    if (snap.width !== canvas.width || snap.height !== canvas.height) {
+      snap.width = canvas.width;
+      snap.height = canvas.height;
+    }
+    const sctx = snap.getContext('2d');
+    if (sctx) {
+      sctx.setTransform(1, 0, 0, 1, 0, 0);
+      sctx.clearRect(0, 0, snap.width, snap.height);
+      sctx.drawImage(canvas, 0, 0);
+    }
+    snapshot.current = { canvas: snap, view: { ...v }, ms: performance.now() - t0 };
     reportView();
   }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow]);
 
@@ -246,9 +264,46 @@ export function PatchCanvas(props: PatchCanvasProps) {
   minScaleRef.current = minScale;
 
 
+  const drawRef = useRef(draw);
+  drawRef.current = draw;
+  // Anything but a view change needs a full draw.
+  const quick = useRef(false);
+  const settleTimer = useRef(0);
+  const frameFn = useCallback(() => {
+    frame.current = 0;
+    const snap = snapshot.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!quick.current || !snap || !canvas || !ctx || snap.canvas.width !== canvas.width || snap.canvas.height !== canvas.height) {
+      drawRef.current();
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const v = view.current;
+    const k = v.scale / snap.view.scale;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = cssVar(canvas, '--canvas-bg', '#fbfaf7');
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(k, 0, 0, k, (v.tx - k * snap.view.tx) * dpr, (v.ty - k * snap.view.ty) * dpr);
+    ctx.drawImage(snap.canvas, 0, 0);
+    reportView();
+  }, []);
   const schedule = useCallback(() => {
-    if (!frame.current) frame.current = requestAnimationFrame(draw);
-  }, [draw]);
+    quick.current = false;
+    if (!frame.current) frame.current = requestAnimationFrame(frameFn);
+  }, [draw, frameFn]); // a new draw (new geometry, colours, …) is the cue for a full redraw
+  /** Redraw after a pan or zoom: from the snapshot if a full draw is slow. */
+  const scheduleMove = useCallback(() => {
+    if ((snapshot.current?.ms ?? 0) < 12) {
+      schedule();
+      return;
+    }
+    quick.current = true;
+    if (!frame.current) frame.current = requestAnimationFrame(frameFn);
+    window.clearTimeout(settleTimer.current);
+    settleTimer.current = window.setTimeout(schedule, 160);
+  }, [schedule, frameFn]);
+  useEffect(() => () => window.clearTimeout(settleTimer.current), []);
 
   const fitBoundsRef = useRef(props.fitBounds);
   fitBoundsRef.current = props.fitBounds;
@@ -307,6 +362,31 @@ export function PatchCanvas(props: PatchCanvasProps) {
     if (!canvas) return;
     const pointers = new Map<number, { x: number; y: number }>();
     let moved = 0;
+    // A flick keeps the view gliding for a moment after you let go.
+    let vel = { vx: 0, vy: 0, t: 0 };
+    let glide = 0;
+    const stopGlide = () => {
+      cancelAnimationFrame(glide);
+      glide = 0;
+    };
+    const startGlide = () => {
+      const v = vel;
+      if (performance.now() - v.t > 100 || Math.hypot(v.vx, v.vy) < 0.15) return;
+      let last = performance.now();
+      const step = () => {
+        const t = performance.now();
+        const dt = Math.min(64, t - last);
+        last = t;
+        view.current.tx += v.vx * dt;
+        view.current.ty += v.vy * dt;
+        const decay = Math.exp(-dt / 220);
+        v.vx *= decay;
+        v.vy *= decay;
+        scheduleMove();
+        glide = Math.hypot(v.vx, v.vy) > 0.02 ? requestAnimationFrame(step) : 0;
+      };
+      glide = requestAnimationFrame(step);
+    };
     let pinch: { d: number; cx: number; cy: number } | null = null;
     const local = (e: { clientX: number; clientY: number }) => {
       const r = canvas.getBoundingClientRect();
@@ -317,17 +397,20 @@ export function PatchCanvas(props: PatchCanvasProps) {
       const s = Math.max(minScaleRef.current(), Math.min(1e5, v.scale * k));
       const kk = s / v.scale;
       view.current = { scale: s, tx: x - (x - v.tx) * kk, ty: y - (y - v.ty) * kk };
-      schedule();
+      scheduleMove();
     };
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      stopGlide();
       const p = local(e);
       zoomAt(p.x, p.y, Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
     };
     const onDown = (e: PointerEvent) => {
       canvas.setPointerCapture(e.pointerId);
+      stopGlide();
       pointers.set(e.pointerId, local(e));
       moved = 0;
+      vel = { vx: 0, vy: 0, t: performance.now() };
       if (pointers.size === 2) {
         const [a, b] = [...pointers.values()];
         pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
@@ -351,14 +434,20 @@ export function PatchCanvas(props: PatchCanvasProps) {
         return;
       }
       moved += Math.abs(p.x - prev.x) + Math.abs(p.y - prev.y);
-      view.current.tx += p.x - prev.x;
-      view.current.ty += p.y - prev.y;
-      schedule();
+      const dx = p.x - prev.x;
+      const dy = p.y - prev.y;
+      view.current.tx += dx;
+      view.current.ty += dy;
+      const t = performance.now();
+      const dt = Math.max(1, t - vel.t);
+      vel = { vx: 0.5 * vel.vx + (0.5 * dx) / dt, vy: 0.5 * vel.vy + (0.5 * dy) / dt, t };
+      scheduleMove();
     };
     const onUp = (e: PointerEvent) => {
       const p = pointers.get(e.pointerId);
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinch = null;
+      if (p && pointers.size === 0 && moved > 6 && e.type === 'pointerup') startGlide();
       if (!p || moved > 6 || !onSelectPath || !circuits) return;
       const v = view.current;
       const w = { x: (p.x - v.tx) / v.scale, y: (p.y - v.ty) / v.scale };
@@ -382,13 +471,14 @@ export function PatchCanvas(props: PatchCanvasProps) {
     canvas.addEventListener('pointerup', onUp);
     canvas.addEventListener('pointercancel', onUp);
     return () => {
+      stopGlide();
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('pointerdown', onDown);
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerup', onUp);
       canvas.removeEventListener('pointercancel', onUp);
     };
-  }, [schedule, circuits, onSelectPath]);
+  }, [scheduleMove, circuits, onSelectPath]);
 
   return (
     <div className="patch-canvas" ref={wrapRef}>
