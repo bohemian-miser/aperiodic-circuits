@@ -39,8 +39,15 @@ export function AboutPage() {
 
       <h2>Building a substitution</h2>
       <p>
-        The <a href={hashFor('lab')}>Substitution lab</a> is stage one. The Spectre is grown by one fixed arrangement of child supertiles, the same for
-        every type; what differs is the table of which type fills which slot. The lab works the same way on a grid of hexagons or squares. Switch
+        The <a href={hashFor('lab')}>Substitution lab</a> is stage one, and it has two modes. <em>Chain</em> mode is how the Spectre is actually built:
+        every tile has four quad points, and a supertile is a chain of slots, each child turned and glued so one of its quad points lands on one of
+        the previous child's. Four of the children's quad points become the supertile's own quad, so the same chain runs again a level up, and every
+        level can be mirrored. The Spectre and its hexagons are seven steps of this plus a slot table, and the lab's presets are exactly the built-in
+        tilings, which you can then change: turns, attachment points, flips, the slot table, the number of slots, the types, and whether a type is a
+        Mystic. Overlaps and gaps are found geometrically at levels 1–4.
+      </p>
+      <p>
+        <em>Grid</em> mode works the same way on a grid of hexagons or squares. Switch
         cells on to make the slots, then for each type paint a child type into every slot, turned and flipped as you like (or left empty, like the
         Spectre Gamma's missing child). An expansion map spaces out the next level's supertiles: it has to scale area by the number of slots, and the
         lab lists the ones that do, ticking those for which the slots are a complete set of residues (unturned children are then guaranteed to fit).

@@ -17,6 +17,7 @@ import {
   type Seam,
 } from '../core/ruleset';
 import { refineLatticeSpec } from '../core/lattice';
+import { refineChainSpec } from '../core/chain';
 import { refineSpec, type Tiling, type TilingSpec } from '../core/tiling';
 import { getTiling, validateTilingSpec } from '../core/tilings';
 import { greedySuggestions, neighbourReport, randomSuggestion, type Suggestion } from '../core/suggest';
@@ -229,7 +230,7 @@ export function BuilderPage({ route }: Props) {
               type="button"
               onClick={() => {
                 const spec = tiling.spec!;
-                const t = addTilingSpec(spec.kind === 'lattice' ? refineLatticeSpec(spec) : refineSpec(spec));
+                const t = addTilingSpec(spec.kind === 'lattice' ? refineLatticeSpec(spec) : spec.kind === 'chain' ? refineChainSpec(spec) : refineSpec(spec));
                 switchTiling(t.id);
                 setMessage(`Made “${t.name}”: each tile now knows which slot of its supertile it fills.`);
               }}

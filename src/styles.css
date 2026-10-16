@@ -849,3 +849,101 @@ textarea.mono {
   gap: 8px;
   margin-bottom: 0;
 }
+
+/* Chain lab */
+
+.chain-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.chain-table th,
+.chain-table td {
+  padding: 2px 4px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.chain-table select {
+  padding: 2px 4px;
+  width: auto;
+}
+
+.quad-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.quad-pick {
+  --chip: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+}
+
+.quad-pick .dot,
+.type-tabs .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--chip);
+  display: inline-block;
+}
+
+.quad-pick select {
+  width: auto;
+  padding: 2px 4px;
+}
+
+h3.sub {
+  font-size: 12px;
+  margin: 12px 0 2px;
+  color: var(--muted);
+}
+
+.slot-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.slot-pick {
+  --chip: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 4px 6px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--chip);
+  background: var(--panel);
+}
+
+.slot-pick select {
+  width: auto;
+  padding: 2px 4px;
+}
+
+.chain-main {
+  margin: 0 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.chain-main.bad {
+  border-color: var(--danger);
+}
+
+.chain-main figcaption {
+  font-size: 12px;
+  padding: 4px 8px;
+  color: var(--muted);
+}

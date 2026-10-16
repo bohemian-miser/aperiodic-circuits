@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   cellCenter,
   cellKey,
@@ -24,6 +24,8 @@ import { paletteColor } from '../core/tiling';
 import { LatticePreview } from '../components/LatticePreview';
 import { hashFor, replaceHash, type Route } from '../route';
 import { addTilingSpec, fromBase64Url, toBase64Url } from '../store';
+import { ChainLab } from './ChainLab';
+import { hash } from '../hash';
 
 interface Props {
   readonly route: Route;
@@ -42,14 +44,6 @@ const TOOLS: { id: Tool; label: string; hint: string }[] = [
 const STORE_KEY = 'aperiodic-circuits:lab';
 const CHECK_LEVELS = 4;
 
-function hash(s: string): string {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0).toString(36);
-}
 
 function initialSpec(param: string | null): LatticeSpec {
   for (const raw of [param ? (() => { try { return fromBase64Url(param); } catch { return null; } })() : null, (() => { try { return localStorage.getItem(STORE_KEY); } catch { return null; } })()]) {
@@ -81,7 +75,47 @@ const MARK = [
   { x: 0.12, y: 0.32 },
 ];
 
+type LabMode = 'chain' | 'grid';
+const MODE_KEY = 'aperiodic-circuits:lab-mode';
+
+function initialMode(param: string | null): LabMode {
+  try {
+    if (param) return (JSON.parse(fromBase64Url(param)) as { kind?: string }).kind === 'lattice' ? 'grid' : 'chain';
+  } catch {
+    /* fall through */
+  }
+  try {
+    return localStorage.getItem(MODE_KEY) === 'grid' ? 'grid' : 'chain';
+  } catch {
+    return 'chain';
+  }
+}
+
+/** The lab has two ways to build a supertile: a chain (how the Spectre is built) or a grid. */
 export function LabPage({ route }: Props) {
+  const [mode, setMode] = useState<LabMode>(() => initialMode(route.params.get('d')));
+  const choose = (m: LabMode) => {
+    setMode(m);
+    try {
+      localStorage.setItem(MODE_KEY, m);
+    } catch {
+      /* private window */
+    }
+  };
+  const modeSwitch = (
+    <div className="row">
+      <button type="button" className={mode === 'chain' ? 'on' : ''} onClick={() => choose('chain')} title="Children glued corner to corner in a chain, like the Spectre">
+        Chain
+      </button>
+      <button type="button" className={mode === 'grid' ? 'on' : ''} onClick={() => choose('grid')} title="Children on a hexagon or square grid">
+        Grid
+      </button>
+    </div>
+  );
+  return mode === 'chain' ? <ChainLab key="chain" route={route} modeSwitch={modeSwitch} /> : <GridLab key="grid" route={route} modeSwitch={modeSwitch} />;
+}
+
+function GridLab({ route, modeSwitch }: Props & { readonly modeSwitch: ReactNode }) {
   const [spec, setSpecRaw] = useState<LatticeSpec>(() => initialSpec(route.params.get('d')));
   const [typeId, setTypeId] = useState(() => spec.types[0].id);
   const [tool, setTool] = useState<Tool>('paint');
@@ -220,6 +254,7 @@ export function LabPage({ route }: Props) {
       <aside className="sidebar">
         <section>
           <h2>Substitution lab</h2>
+          {modeSwitch}
           <p className="hint">
             Stage one: build the supertile rules. Every tile is one cell of a grid. A supertile is the set of slot cells, and each type says what fills each slot.
             The supertiles of the next level sit apart by the expansion map. When it all fits without overlaps or holes, send it on to number the edges.
