@@ -1,3 +1,4 @@
+import { chainTiling, validateChainSpec } from '../chain';
 import { latticeTiling, validateLatticeSpec } from '../lattice';
 import { similarityTiling, validateSimilaritySpec, type Tiling, type TilingSpec } from '../tiling';
 import { chairTiling } from './chair';
@@ -10,12 +11,15 @@ const custom = new Map<string, Tiling>();
 
 export function validateTilingSpec(spec: TilingSpec): string[] {
   if (spec?.kind === 'lattice') return validateLatticeSpec(spec);
+  if (spec?.kind === 'chain') return validateChainSpec(spec);
   if (spec?.kind === 'similarity') return validateSimilaritySpec(spec);
-  return ['kind must be "similarity" or "lattice"'];
+  return ['kind must be "similarity", "lattice" or "chain"'];
 }
 
 export function tilingFromSpec(spec: TilingSpec): Tiling {
-  return spec.kind === 'lattice' ? latticeTiling(spec) : similarityTiling(spec);
+  if (spec.kind === 'lattice') return latticeTiling(spec);
+  if (spec.kind === 'chain') return chainTiling(spec);
+  return similarityTiling(spec);
 }
 
 /** Register a data-defined tiling (imported, refined, or from the Substitution lab). */

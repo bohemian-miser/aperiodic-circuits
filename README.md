@@ -11,7 +11,7 @@ The [Spectre circuits](https://github.com/bohemian-miser/Spectre) idea, opened u
 ## Pages
 
 * **Explorer** (`#/explore`): grow a patch of any tiling, pick the classes that carry a line, and pick a pairing per tile. Circuits are coloured by length, open lines run red to violet along their length, and tails are red. Click a line to pick it out. **Infinite** mode shows the whole plane instead of one supertile, grown around the view as you pan (an anchored tile with a seeded ancestor chain, as in the Spectre project, for every tiling here); a picked line is traced in a rainbow and stays picked as you follow it. The **survey** runs every combination of the current selection on a smaller patch and tabulates circuits, distinct lengths, longest circuit and open lines.
-* **Substitution lab** (`#/lab`): stage one, build the supertile rules. Switch cells on a hexagon or square grid on and off to make the slots, give each of your types (three to start) a child type per slot, turned and flipped as you like, and pick an expansion map. It checks levels 1–4 for overlaps and holes (exact, since every tile stays on the grid) and shows the substitution matrix, growth and primitivity. Then send it on to number the edges.
+* **Substitution lab** (`#/lab`): stage one, build the supertile rules. **Chain** mode is the Spectre's own construction as data: a chain of slots, each child turned and glued quad point to quad point onto the previous one, a supertile quad taken from the children, optional mirroring per level, and a slot table per type. The *Spectre hexagons* and *Spectre* presets are exactly the built-in tilings (the built-ins are now defined the same way), and everything is editable; overlaps and gaps are checked geometrically at levels 1–4. **Grid** mode: switch cells on a hexagon or square grid on and off to make the slots, give each of your types (three to start) a child type per slot, turned and flipped as you like, and pick an expansion map. It checks levels 1–4 for overlaps and holes (exact, since every tile stays on the grid) and shows the substitution matrix, growth and primitivity. Then send it on to number the edges.
 * **Edge builder** (`#/build`): paint classes onto prototile edges, join or split seams, rename classes, and see straight away whether the labelling is consistent and how many edge selections are tail-free. **Help me number the edges** reports how many tile edges always meet the same neighbour and suggests numberings: greedy merges of the finest classes that keep the most tail-free selections, or random merges, all consistent by construction. Save rule sets in the browser, export or import them as JSON, or open them in the explorer with a link that carries the whole rule set.
 * **About** (`#/about`): the definitions and the tiling JSON format.
 
@@ -43,6 +43,7 @@ The [Spectre circuits](https://github.com/bohemian-miser/Spectre) idea, opened u
 ```
 src/core/          the engine, no React
   tiling.ts        prototiles, similarity substitutions (JSON), refinement
+  chain.ts         chain substitutions (the Spectre's construction as data), checks, presets
   lattice.ts       Substitution-lab grids: slots, orientations, expansion maps, overlap/hole checks
   suggest.ts       edge-numbering suggestions and the neighbour report
   infinite.ts      infinite mode: anchored ancestor chain, viewport culling

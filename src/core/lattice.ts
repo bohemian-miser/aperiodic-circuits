@@ -374,14 +374,18 @@ export interface SubstitutionStats {
 
 export function substitutionStats(spec: LatticeSpec): SubstitutionStats {
   const types = spec.types.map((t) => t.id);
+  const children: Record<string, (string | null)[]> = {};
+  for (const t of types) children[t] = spec.cells.map((c) => childOf(spec, t, c)?.type ?? null);
+  return statsFromChildren(types, children);
+}
+
+/** Substitution matrix, growth, primitivity and type shares from each type's list of children. */
+export function statsFromChildren(types: readonly string[], children: Readonly<Record<string, readonly (string | null)[]>>): SubstitutionStats {
   const idx = new Map(types.map((t, i) => [t, i]));
   const k = types.length;
   const counts = types.map((t) => {
     const row = new Array<number>(k).fill(0);
-    for (const c of spec.cells) {
-      const ch = childOf(spec, t, c);
-      if (ch && idx.has(ch.type)) row[idx.get(ch.type)!]++;
-    }
+    for (const c of children[t] ?? []) if (c !== null && idx.has(c)) row[idx.get(c)!]++;
     return row;
   });
   // Primitive: some power of the matrix is strictly positive (Wielandt bound).
@@ -407,10 +411,7 @@ export function substitutionStats(spec: LatticeSpec): SubstitutionStats {
     v = w.map((x) => x / s);
   }
   const used = new Set<string>();
-  for (const t of types) for (const c of spec.cells) {
-    const ch = childOf(spec, t, c);
-    if (ch) used.add(ch.type);
-  }
+  for (const t of types) for (const c of children[t] ?? []) if (c !== null) used.add(c);
   return { types, counts, primitive, growth, frequencies: v, unused: types.filter((t) => !used.has(t)) };
 }
 
