@@ -159,19 +159,19 @@ export class InfinitePlane {
 
   /** Every sample point of the view lies in some tile. */
   private fills(rect: Rect, instances: readonly TileInstance[]): boolean {
-    const polys = instances.map((i) => prototile(this.tiling, i.type).pts.map((p) => transPt(i.xform, p)));
-    const boxes = polys.map((pts) => {
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      for (const p of pts) {
-        minX = Math.min(minX, p.x);
-        maxX = Math.max(maxX, p.x);
-        minY = Math.min(minY, p.y);
-        maxY = Math.max(maxY, p.y);
-      }
-      return { minX, minY, maxX, maxY };
+    // Leaves are placed rigidly, so a prototile's bounding circle carries
+    // over: test that first and transform a polygon only when it might hold
+    // the sample.
+    const n = instances.length;
+    const cx = new Float64Array(n);
+    const cy = new Float64Array(n);
+    const rr = new Float64Array(n);
+    instances.forEach((inst, k) => {
+      const b = this.leafCircle(inst.type);
+      const c = transPt(inst.xform, b.c);
+      cx[k] = c.x;
+      cy[k] = c.y;
+      rr[k] = b.r * b.r;
     });
     const N = 5;
     for (let i = 0; i < N; i++) {
@@ -180,15 +180,28 @@ export class InfinitePlane {
         const x = rect.minX + ((i + 0.5137) / N) * (rect.maxX - rect.minX);
         const y = rect.minY + ((j + 0.4729) / N) * (rect.maxY - rect.minY);
         let inside = false;
-        for (let k = 0; k < polys.length && !inside; k++) {
-          const b = boxes[k];
-          if (x < b.minX || x > b.maxX || y < b.minY || y > b.maxY) continue;
-          inside = pointInPolygon(x, y, polys[k]);
+        for (let k = 0; k < n && !inside; k++) {
+          if ((x - cx[k]) ** 2 + (y - cy[k]) ** 2 > rr[k]) continue;
+          const inst = instances[k];
+          inside = pointInPolygon(x, y, prototile(this.tiling, inst.type).pts.map((p) => transPt(inst.xform, p)));
         }
         if (!inside) return false;
       }
     }
     return true;
+  }
+
+  private readonly leafCircles = new Map<string, Circle>();
+  /** A prototile's own bounding circle (centre at its vertex mean). */
+  private leafCircle(type: string): Circle {
+    let b = this.leafCircles.get(type);
+    if (!b) {
+      const pts = prototile(this.tiling, type).pts;
+      const c = { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length };
+      b = { c, r: Math.max(...pts.map((p) => Math.hypot(p.x - c.x, p.y - c.y))) * (1 + 1e-9) };
+      this.leafCircles.set(type, b);
+    }
+    return b;
   }
 
   /** Leaves overlapping `rect`, ids 0..n-1. */
