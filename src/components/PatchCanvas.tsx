@@ -44,6 +44,17 @@ export interface PatchCanvasProps {
 
 /** The chase trail's rainbow runs red to violet and back every this many tiles. */
 const TRAIL_PERIOD = 600;
+/** Trail chords per drawing chunk. */
+const TRAIL_CHUNK = 512;
+
+interface TrailChunk {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  readonly all: Path2D;
+  readonly buckets: Map<string, Path2D>;
+}
 
 export interface WorldRect {
   readonly minX: number;
@@ -166,39 +177,59 @@ export function PatchCanvas(props: PatchCanvasProps) {
     return { all: p, buckets };
   }, [circuits, selectedPath]);
 
-  // The chase trail, kept as Path2Ds that only ever get appended to (rebuilt
-  // when the hold drops chords off the back).
-  const trail = useRef<{ chase: StrandChase; dropped: number; built: number; all: Path2D; buckets: Map<string, Path2D> } | null>(null);
+  // The chase trail, kept as Path2Ds in chunks of consecutive chords that
+  // are only ever appended to, so a frame strokes just the chunks on screen
+  // and the hold drops whole chunks off the back.
+  const trail = useRef<{ chase: StrandChase; built: number; chunks: Map<number, TrailChunk> } | null>(null);
   const drawTrail = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
     if (!chase) return;
     let T = trail.current;
-    if (!T || T.chase !== chase || T.dropped !== chase.dropped) {
-      T = trail.current = { chase, dropped: chase.dropped, built: 0, all: new Path2D(), buckets: new Map() };
-    }
-    for (; T.built < chase.chords; T.built++) {
-      const ch = chase.chord(T.built);
-      const u = ((chase.dropped + T.built) / TRAIL_PERIOD) % 2;
+    if (!T || T.chase !== chase) T = trail.current = { chase, built: 0, chunks: new Map() };
+    const end = chase.dropped + chase.chords;
+    for (let g = Math.max(T.built, chase.dropped); g < end; g++) {
+      const ch = chase.chord(g - chase.dropped);
+      const k = Math.floor(g / TRAIL_CHUNK);
+      let C = T.chunks.get(k);
+      if (!C) T.chunks.set(k, (C = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, all: new Path2D(), buckets: new Map() }));
+      const u = (g / TRAIL_PERIOD) % 2;
       const col = rainbow(Math.round((u < 1 ? u : 2 - u) * 47) / 47);
-      let b = T.buckets.get(col);
-      if (!b) T.buckets.set(col, (b = new Path2D()));
-      for (const q of [T.all, b]) {
+      let b = C.buckets.get(col);
+      if (!b) C.buckets.set(col, (b = new Path2D()));
+      for (const q of [C.all, b]) {
         q.moveTo(ch.a.x, ch.a.y);
         q.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
       }
+      for (const p of [ch.a, ch.b, ch.c]) {
+        C.minX = Math.min(C.minX, p.x);
+        C.minY = Math.min(C.minY, p.y);
+        C.maxX = Math.max(C.maxX, p.x);
+        C.maxY = Math.max(C.maxY, p.y);
+      }
     }
+    T.built = end;
+    for (const k of T.chunks.keys()) if ((k + 1) * TRAIL_CHUNK <= chase.dropped) T.chunks.delete(k);
     const dpr = window.devicePixelRatio || 1;
     const v = view.current;
+    const { w, h } = size.current;
     ctx.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
     const lw = chordWidth(v.scale, props.lineWidth);
+    const pad = lw * 4;
+    const minX = -v.tx / v.scale - pad;
+    const minY = -v.ty / v.scale - pad;
+    const maxX = (w - v.tx) / v.scale + pad;
+    const maxY = (h - v.ty) / v.scale + pad;
+    const shown = [...T.chunks.values()].filter((C) => C.maxX >= minX && C.minX <= maxX && C.maxY >= minY && C.minY <= maxY);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
     ctx.lineWidth = lw * 3.2;
-    ctx.stroke(T.all);
+    for (const C of shown) ctx.stroke(C.all);
     ctx.lineWidth = lw * 1.8;
-    for (const [col, b] of T.buckets) {
-      ctx.strokeStyle = col;
-      ctx.stroke(b);
+    for (const C of shown) {
+      for (const [col, b] of C.buckets) {
+        ctx.strokeStyle = col;
+        ctx.stroke(b);
+      }
     }
     const hd = chase.headPt;
     ctx.beginPath();
@@ -408,12 +439,15 @@ export function PatchCanvas(props: PatchCanvasProps) {
       const cy = (h / 2 - v.ty) / v.scale;
       const { pace, damping, onTick } = chaseOpts.current;
       const before = chase.steps;
-      const until = now + 4;
+      const until = now + 6;
+      chase.sipping = pace !== null;
       if (pace === null) {
-        // Full speed: as far as the camera can see ahead.
-        for (let n = 0; n < 20000 && performance.now() < until; n++) {
-          const hd = chase.headPt;
-          if (Math.hypot(hd.x - cx, hd.y - cy) > 0.75 * viewMin || !chase.step()) break;
+        // Full speed, as on the Spectre map: as far as a slice of the frame
+        // allows; the camera's catch-up rules keep the head in sight.
+        while (performance.now() < until) {
+          let n = 0;
+          while (n < 256 && chase.step()) n++;
+          if (n < 256) break;
         }
       } else if (chase.status === 'running') {
         budget = Math.min(budget + (pace * dt) / 1000, 2000);
