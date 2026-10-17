@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { localChords, type LocalChord } from '../core/circuits';
-import { lerpPt } from '../core/geom';
+import { lerpPt, type Pt } from '../core/geom';
 import { halfAt, MORPH_MS, morphChords, morphProgress, prefersReducedMotion, type ChordMorph } from '../core/morph';
 import { polygonCentroid } from '../core/polygon';
 import { className, edgeSeamIndex, seamCenter, type RuleSet } from '../core/ruleset';
@@ -23,11 +23,8 @@ export interface TileGlyphProps {
   readonly flagged?: ReadonlySet<number>;
 }
 
-export function TileGlyph(props: TileGlyphProps) {
-  const { tiling, type, ruleSet, selection, comboIndex = 0, size = 120, onEdgeClick, onVertexClick, showLabels, flagged } = props;
-  const proto = prototile(tiling, type);
-  const pts = proto.pts;
-  const n = pts.length;
+/** The viewBox a glyph of these points is drawn in, and the size of the tile. */
+export function glyphFrame(pts: readonly Pt[]): { viewBox: string; span: number } {
   const xs = pts.map((p) => p.x);
   const ys = pts.map((p) => p.y);
   const minX = Math.min(...xs);
@@ -36,7 +33,15 @@ export function TileGlyph(props: TileGlyphProps) {
   const maxY = Math.max(...ys);
   const span = Math.max(maxX - minX, maxY - minY);
   const pad = span * 0.12;
-  const vb = `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}`;
+  return { viewBox: `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}`, span };
+}
+
+export function TileGlyph(props: TileGlyphProps) {
+  const { tiling, type, ruleSet, selection, comboIndex = 0, size = 120, onEdgeClick, onVertexClick, showLabels, flagged } = props;
+  const proto = prototile(tiling, type);
+  const pts = proto.pts;
+  const n = pts.length;
+  const { viewBox: vb, span } = glyphFrame(pts);
   const sw = span / 40;
   const seams = ruleSet.seams[type] ?? [];
   const soe = edgeSeamIndex(ruleSet, type, n);

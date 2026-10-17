@@ -10,6 +10,7 @@ import { qkey } from '../core/polygon';
 import { StrandChase, type ChaseStatus } from '../core/chase';
 import type { Tiling } from '../core/tiling';
 import { PatchCanvas, pathColors } from '../components/PatchCanvas';
+import { TileEditor } from '../components/TileEditor';
 import { TileGlyph } from '../components/TileGlyph';
 import { classColor } from '../colors';
 import { hashFor, replaceHash, type Route } from '../route';
@@ -75,6 +76,8 @@ export function ExplorerPage({ route }: Props) {
   // The picked line is remembered by a point on it, so it survives the patch
   // being regrown (infinite mode regrows on every pan).
   const [pickedAt, setPickedAt] = useState<readonly string[] | null>(null);
+  // Which layout of the quick controls to show (a: strip above the field, b: floating on it, c: dock below it).
+  const [ui] = useState(() => (['a', 'b', 'c'].includes(p.get('ui') ?? '') ? p.get('ui')! : 'a'));
   const [infiniteOn, setInfiniteOn] = useState(() => p.get('inf') === '1');
   const [seed, setSeed] = useState(() => Math.max(1, Number(p.get('seed')) || 1));
   const [viewRect, setViewRect] = useState<Rect>(INITIAL_VIEW);
@@ -85,6 +88,12 @@ export function ExplorerPage({ route }: Props) {
     setViewRect(r);
     setGrownRect((g) => (covers(g, r) && area(g) < 4 * area(r) ? g : withMargin(r)));
   }, []);
+  // The tile pictures in the quick controls: 0 big, 1 small, 2 hidden.
+  const [tileSize, setTileSize] = useStoredNumber('quick-tiles', 0, (n) => n === 0 || n === 1 || n === 2);
+  const [statsOpen, setStatsOpen] = useStoredFlag('stats-open', false);
+  const [basisOpen, setBasisOpen] = useStoredFlag('quick-basis', false);
+  // The tile magnified for drawing its pairing.
+  const [editing, setEditing] = useState<string | null>(null);
   const [showBackground, setShowBackground] = useStoredFlag('background', true);
   const [showTiles, setShowTiles] = useStoredFlag('tile-colours', true);
   const [rainbowLines, setRainbowLines] = useStoredFlag('rainbow-lines', true);
@@ -136,6 +145,7 @@ export function ExplorerPage({ route }: Props) {
   // Same tiles and crossings, so a new pairing animates on the canvas.
   const morphKey = useMemo(() => ({}), [tiling, ruleSet, instances, selection]);
   useEffect(() => setPickedAt(null), [tiling, ruleSet, root, seed, infinite]);
+  useEffect(() => setEditing(null), [tiling, ruleSet]);
   // A chase belongs to one plane and one set of lines.
   useEffect(() => setChase(null), [plane, ruleSet, selection, combo, chaseOn]);
   useEffect(() => {
@@ -196,10 +206,10 @@ export function ExplorerPage({ route }: Props) {
 
   // Keep the URL in step (without spamming history).
   useEffect(() => {
-    const params: Record<string, string | number | undefined> = { t: tiling.id, rs: ruleSet.id, lv: level, root, s: share, inf: infinite ? 1 : undefined, seed: infinite && seed !== 1 ? seed : undefined };
+    const params: Record<string, string | number | undefined> = { t: tiling.id, rs: ruleSet.id, lv: level, root, s: share, inf: infinite ? 1 : undefined, seed: infinite && seed !== 1 ? seed : undefined, ui: ui !== 'a' ? ui : undefined };
     if (embedded && embedded.id === ruleSet.id) params.rsd = p.get('rsd') ?? undefined;
     replaceHash(hashFor('explore', params));
-  }, [tiling.id, ruleSet.id, level, root, share, embedded, p, infinite, seed]);
+  }, [tiling.id, ruleSet.id, level, root, share, embedded, p, infinite, seed, ui]);
 
   const toggleClass = (c: number) => {
     const next = new Set(selection);
@@ -231,6 +241,52 @@ export function ExplorerPage({ route }: Props) {
     setCombo(next);
   };
   const totalCombos = types.reduce((acc, t) => acc * Math.max(1, counts[t] > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(counts[t])), 1);
+  // Combinations in order, as one mixed-radix number: the first type with a
+  // choice is the lowest digit, the same order the survey runs them in.
+  const choiceTypes = types.filter((t) => counts[t] <= MAX_ENUMERATED_CROSSINGS && choiceCount(counts[t]) > 1);
+  let comboIndex = 0;
+  for (let i = choiceTypes.length - 1; i >= 0; i--) {
+    const c = choiceCount(counts[choiceTypes[i]]);
+    comboIndex = comboIndex * c + ((combo[choiceTypes[i]] ?? 0) % c);
+  }
+  const stepAll = (d: number) => {
+    if (totalCombos <= 1) return;
+    let k = (((comboIndex + d) % totalCombos) + totalCombos) % totalCombos;
+    const next: Record<string, number> = {};
+    for (const t of choiceTypes) {
+      const c = choiceCount(counts[t]);
+      next[t] = k % c;
+      k = Math.floor(k / c);
+    }
+    setCombo(next);
+  };
+  const quick = (
+    <QuickControls
+      className={`quick quick-${ui}`}
+      tiling={tiling}
+      ruleSet={ruleSet}
+      classes={classes}
+      selection={selection}
+      onToggle={toggleClass}
+      tailFree={isTailFree}
+      oddTypes={circuits.oddTypes}
+      counts={counts}
+      combo={combo}
+      onStepTile={stepCombo}
+      tileSize={tileSize}
+      onTileSize={setTileSize}
+      onOpenTile={setEditing}
+      basis={parity.basis}
+      basisCoords={coords}
+      onToggleGroup={toggleGroup}
+      basisOpen={basisOpen}
+      onBasisOpen={setBasisOpen}
+      index={comboIndex}
+      total={totalCombos}
+      onRandom={randomCombo}
+      onStep={stepAll}
+    />
+  );
 
   const [shareDraft, setShareDraft] = useState<string | null>(null);
   const applyShare = (s: string) => {
@@ -542,7 +598,7 @@ export function ExplorerPage({ route }: Props) {
                         ‹
                       </button>
                       <span>
-                        {(combo[q.id] ?? 0) % choices}/{choices}
+                        {((combo[q.id] ?? 0) % choices) + 1}/{choices}
                       </span>
                       <button type="button" onClick={() => stepCombo(q.id, 1)} aria-label={`Next pairing for ${q.name}`}>
                         ›
@@ -558,6 +614,9 @@ export function ExplorerPage({ route }: Props) {
           <div className="row">
             <button type="button" onClick={randomCombo}>
               Random
+            </button>
+            <button type="button" onClick={() => stepAll(1)} disabled={totalCombos <= 1}>
+              Next
             </button>
             <button type="button" onClick={() => setCombo({})}>
               Reset
@@ -582,7 +641,20 @@ export function ExplorerPage({ route }: Props) {
         <Survey tiling={tiling} ruleSet={ruleSet} selection={selection} counts={counts} onPick={setCombo} />
       </aside>
 
-      <main className="stage">
+      <main className={`stage ui-${ui}`}>
+        {ui !== 'c' && quick}
+        {editing && (
+          <TileEditor
+            key={editing}
+            tiling={tiling}
+            ruleSet={ruleSet}
+            selection={selection}
+            type={editing}
+            index={combo[editing] ?? 0}
+            onSetIndex={(i) => setCombo({ ...combo, [editing]: i })}
+            onClose={() => setEditing(null)}
+          />
+        )}
         <PatchCanvas
           tiling={tiling}
           instances={instances}
@@ -606,20 +678,25 @@ export function ExplorerPage({ route }: Props) {
           selectedRainbow={infinite}
           morphKey={morphKey}
         />
+        {ui === 'c' && quick}
         <div className="stats">
           <span>
             <b>{circuits.circuits.toLocaleString()}</b> circuits
           </span>
           <span>
-            <b>{circuits.openLines.toLocaleString()}</b> open lines
+            <b>{circuits.openLines.toLocaleString()}</b> open
           </span>
-          <span className={circuits.tails ? 'bad' : ''}>
-            <b>{circuits.tails.toLocaleString()}</b> with tails
-          </span>
-          <span>
-            <b>{circuits.chords.length.toLocaleString()}</b> segments
-          </span>
-          {lengths.length > 0 && (
+          {circuits.tails > 0 && (
+            <span className="bad">
+              <b>{circuits.tails.toLocaleString()}</b> with tails
+            </span>
+          )}
+          {statsOpen && (
+            <span>
+              <b>{circuits.chords.length.toLocaleString()}</b> segments
+            </span>
+          )}
+          {statsOpen && lengths.length > 0 && (
             <span className="lengths">
               {lengths.slice(0, 14).map(([len, k]) => {
                 const pi = circuits.paths.findIndex((q) => q.closed && q.chords.length === len);
@@ -639,6 +716,9 @@ export function ExplorerPage({ route }: Props) {
               {infinite && !sel.closed ? ' so far' : ''}
             </span>
           )}
+          <button type="button" className="stats-more" onClick={() => setStatsOpen(!statsOpen)} aria-expanded={statsOpen}>
+            {statsOpen ? 'Less ▴' : 'More ▾'}
+          </button>
         </div>
         <p className="stage-hint">
           Drag to pan, scroll or pinch to zoom, click a line to {infinite && chaseOn ? 'chase it' : 'pick it out'}.
@@ -676,6 +756,153 @@ function area(r: Rect): number {
 function describeChase(c: { steps: number; status: ChaseStatus }): string {
   const n = c.steps.toLocaleString();
   return c.status === 'closed' ? `Chased a closed circuit: ${n} tiles round` : c.status === 'tail' ? `Chase ended in a tail after ${n} tiles` : `Chasing… ${n} tiles`;
+}
+
+const TILE_SIZE_NAMES = ['big', 'small', 'off'];
+
+interface QuickProps {
+  readonly className: string;
+  readonly tiling: Tiling;
+  readonly ruleSet: RuleSet;
+  readonly classes: readonly number[];
+  readonly selection: ReadonlySet<number>;
+  readonly onToggle: (c: number) => void;
+  readonly tailFree: boolean;
+  readonly oddTypes: readonly string[];
+  readonly counts: Record<string, number>;
+  readonly combo: Record<string, number>;
+  readonly onStepTile: (type: string, d: number) => void;
+  readonly tileSize: number;
+  readonly onTileSize: (n: number) => void;
+  readonly onOpenTile: (type: string) => void;
+  readonly basis: readonly (readonly number[])[];
+  readonly basisCoords: readonly boolean[] | null;
+  readonly onToggleGroup: (g: readonly number[]) => void;
+  readonly basisOpen: boolean;
+  readonly onBasisOpen: (open: boolean) => void;
+  readonly index: number;
+  readonly total: number;
+  readonly onRandom: () => void;
+  readonly onStep: (d: number) => void;
+}
+
+/**
+ * The edge picker, each tile's pairing, and a stepper through every pairing
+ * of the picked edges, kept by the field so you can watch it change.
+ */
+function QuickControls(props: QuickProps) {
+  const { className: cls, tiling, ruleSet, classes, selection, onToggle, tailFree, oddTypes, counts, combo, onStepTile, tileSize, onTileSize, onOpenTile, index, total, onRandom, onStep } = props;
+  const { basis, basisCoords, onToggleGroup, basisOpen, onBasisOpen } = props;
+  return (
+    <div className={cls}>
+      <div className={`quick-edges${classes.length > 12 ? ' many' : ''}`}>
+        <span className="quick-label">Edges</span>
+        <span className={`quick-dot ${tailFree ? 'good' : 'bad'}`} title={tailFree ? 'Tail-free' : `Odd crossings on ${oddTypes.join(', ')}`} />
+        {basis.length > 0 && (
+          <button
+            type="button"
+            className={`quick-toggle${basisOpen ? ' on' : ''}`}
+            onClick={() => onBasisOpen(!basisOpen)}
+            aria-expanded={basisOpen}
+            title="Basis groups: flip a group's edges together and stay tail-free"
+          >
+            groups {basisOpen ? '▴' : '▾'}
+          </button>
+        )}
+        <button
+          type="button"
+          className="quick-size"
+          onClick={() => onTileSize((tileSize + 1) % 3)}
+          title={`Tile pictures: ${TILE_SIZE_NAMES[tileSize]} (tap for ${TILE_SIZE_NAMES[(tileSize + 1) % 3]})`}
+          aria-label={`Tile pictures: ${TILE_SIZE_NAMES[tileSize]}`}
+        >
+          <span className="long">Tiles: {TILE_SIZE_NAMES[tileSize]}</span>
+          <span className="short">⬡{['L', 'S', '–'][tileSize]}</span>
+        </button>
+        {classes.map((c) => (
+          <button
+            type="button"
+            key={c}
+            className={`chip${selection.has(c) ? ' on' : ''}`}
+            style={{ ['--chip' as string]: classColor(c) }}
+            onClick={() => onToggle(c)}
+            aria-pressed={selection.has(c)}
+          >
+            {className(ruleSet, c)}
+          </button>
+        ))}
+      </div>
+      {basisOpen && basis.length > 0 && (
+        <div className={`quick-basis${basis.length > 8 ? ' many' : ''}`}>
+          {basis.map((g, i) => {
+            const label = g.map((c) => className(ruleSet, c)).join(ruleSet.classNames ? ',' : '·');
+            const on = basisCoords?.[i] ?? false;
+            return (
+              <button type="button" key={label} className={`chip plain${on ? ' on' : ''}`} onClick={() => onToggleGroup(g)} aria-pressed={on}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {tileSize < 2 && (
+        <div className={`quick-tiles${tileSize === 1 ? ' small' : ''}`}>
+          {tiling.prototiles.map((q) => {
+            const n = counts[q.id];
+            const choices = n > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(n);
+            const varies = n % 2 === 0 && choices > 1;
+            const kind = n % 2 === 1 ? 'odd' : n === 0 ? 'empty' : varies ? 'varies' : 'lines';
+            // Big tiles open in the pairing editor; small ones just step their pairing.
+            const open = tileSize === 0 ? n > 0 : varies;
+            const onClick = () => (tileSize === 0 ? onOpenTile(q.id) : onStepTile(q.id, 1));
+            const body = (
+              <>
+                <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={tileSize === 1 ? 34 : 56} />
+                <span className="quick-tile-name">{q.name}</span>
+                {(varies || n % 2 === 1) && (
+                  <span className="quick-tile-ctl">{n % 2 === 1 ? 'odd' : `${((combo[q.id] ?? 0) % choices) + 1}/${choices}`}</span>
+                )}
+              </>
+            );
+            return open ? (
+              <button type="button" className={`quick-tile ${kind}`} key={q.id} title={tileSize === 0 ? `${q.name}: tap to draw its pairing` : `${q.name}: tap for its next pairing`} onClick={onClick}>
+                {body}
+              </button>
+            ) : (
+              <div className={`quick-tile ${kind}`} key={q.id} title={n === 0 ? `${q.name}: no lines` : q.name}>
+                {body}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {total > 1 ? (
+        <div className="quick-combo">
+          <button type="button" onClick={() => onStep(-1)} aria-label="Previous pairing">
+            ‹
+          </button>
+          <span className="quick-count" title={`Pairing ${(index + 1).toLocaleString()} of ${total.toLocaleString()}`}>
+            Pairing
+            <br />
+            <b>
+              {shortCount(index + 1)}/{shortCount(total)}
+            </b>
+          </span>
+          <button type="button" onClick={() => onStep(1)}>
+            Next pairing ›
+          </button>
+          <button type="button" className="primary" onClick={onRandom}>
+            Random
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Counts that won't fit the stepper shrink to "156T". */
+function shortCount(n: number): string {
+  return n < 100_000 ? n.toLocaleString() : new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 }
 
 interface SurveyProps {

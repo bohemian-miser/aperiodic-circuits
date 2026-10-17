@@ -63,16 +63,16 @@ a {
   display: flex;
   align-items: center;
   gap: 24px;
-  padding: 10px 18px;
+  padding: 8px 18px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
-  flex-wrap: wrap;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
   font-weight: 700;
   font-size: 16px;
   color: var(--ink);
@@ -81,8 +81,10 @@ a {
 
 .topbar nav {
   display: flex;
+  align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
 }
 
 .topbar nav a {
@@ -90,6 +92,7 @@ a {
   border-radius: 999px;
   color: var(--ink);
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .topbar nav a.on {
@@ -98,7 +101,45 @@ a {
 }
 
 .topbar nav a.ext {
+  display: flex;
+  margin-left: auto;
+  padding: 6px;
   color: var(--muted);
+}
+
+.topbar nav a.ext:hover {
+  color: var(--ink);
+}
+
+.topbar nav .short {
+  display: none;
+}
+
+@media (max-width: 820px) {
+  .topbar {
+    gap: 8px;
+    padding: 6px 10px;
+  }
+
+  .brand-name {
+    display: none;
+  }
+
+  .topbar nav {
+    gap: 0;
+  }
+
+  .topbar nav a {
+    padding: 5px 10px;
+  }
+
+  .topbar nav .long {
+    display: none;
+  }
+
+  .topbar nav .short {
+    display: inline;
+  }
 }
 
 .workspace {
@@ -394,6 +435,13 @@ details summary {
   border-top: 1px solid var(--line);
   background: var(--panel);
   font-variant-numeric: tabular-nums;
+}
+
+.stats-more {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .stats .lengths {
@@ -946,4 +994,398 @@ h3.sub {
   font-size: 12px;
   padding: 4px 8px;
   color: var(--muted);
+}
+
+/* Explorer quick controls: edges, each tile's pairing, and a pairing stepper by the field. */
+
+/* The sections flow like words: with few edges and tiles they share a line. */
+.quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  padding: 5px 8px;
+  background: var(--panel);
+  z-index: 2;
+}
+
+.quick-edges,
+.quick-basis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+/* With lots of edges (or groups) every chip shrinks. */
+.quick-edges.many .chip {
+  min-width: 22px;
+  padding: 0 4px;
+  font-size: 11px;
+  border-width: 1.5px;
+}
+
+.quick-edges.many {
+  gap: 3px;
+}
+
+.quick-basis.many .chip {
+  padding: 0 5px;
+  font-size: 10.5px;
+}
+
+.quick-basis.many {
+  gap: 3px;
+}
+
+
+
+.quick-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.quick-edges .chip {
+  min-width: 28px;
+  padding: 1px 7px;
+}
+
+.quick-basis .chip {
+  padding: 1px 7px;
+  font-size: 12px;
+}
+
+.quick-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.quick-dot.good {
+  background: var(--good);
+}
+
+.quick-dot.bad {
+  background: var(--danger);
+}
+
+.quick-toggle,
+.quick-size {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+
+
+.quick-toggle.on {
+  color: var(--panel);
+}
+
+.quick-size .short {
+  display: none;
+}
+
+.quick-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 100%;
+}
+
+.quick-tile {
+  width: 58px;
+}
+
+.quick-tiles.small .quick-tile {
+  width: 37px;
+}
+
+.quick-tile {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  font: inherit;
+  color: inherit;
+}
+
+button.quick-tile {
+  cursor: pointer;
+}
+
+/* Tiles with lines through them are outlined a little bolder than empty ones. */
+.quick-tile.lines,
+.quick-tile.varies,
+.quick-tile.odd {
+  border-width: 1.5px;
+}
+
+.quick-tile.lines {
+  border-color: var(--muted);
+}
+
+.quick-tile.varies {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+}
+
+.quick-tile.odd {
+  border-color: var(--danger);
+}
+
+.quick-tile-name {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.quick-tile-ctl {
+  position: absolute;
+  bottom: 0;
+  right: 2px;
+  font-size: 9.5px;
+  line-height: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.quick-tile.odd .quick-tile-ctl {
+  color: var(--danger);
+}
+
+.quick-tiles.small .quick-tile-name {
+  font-size: 8px;
+}
+
+.quick-tiles.small .quick-tile-ctl {
+  font-size: 8.5px;
+  line-height: 10px;
+  right: 1px;
+}
+
+.quick-combo {
+  flex: 1 1 250px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.quick-combo button {
+  flex: 1;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.quick-combo button[aria-label] {
+  flex: 0 0 auto;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+.quick-count {
+  min-width: 48px;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 10.5px;
+  line-height: 1.15;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-count b {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+/* The magnified tile you draw a pairing on. */
+.tile-editor-pop {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: min(300px, calc(100vw - 24px));
+  padding: 6px 10px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  z-index: 10;
+}
+
+.tile-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tile-editor-step {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-editor-step button {
+  padding: 0 8px;
+}
+
+.tile-editor-close {
+  margin-left: auto;
+  padding: 0 9px;
+  font-size: 18px;
+  line-height: 26px;
+}
+
+/* Hexagons are wider than tall: crop the square glyph's empty top and bottom. */
+.tile-editor-stage {
+  position: relative;
+  width: 260px;
+  height: 230px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.tile-editor-stage > svg {
+  position: absolute;
+  top: -15px;
+  left: 0;
+  width: 260px;
+  height: 260px;
+}
+
+.tile-editor-touch {
+  touch-action: none;
+}
+
+.tile-editor-hit {
+  cursor: crosshair;
+}
+
+.tile-editor-hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* a: a panel above the field. */
+.quick-a {
+  border-bottom: 1px solid var(--line);
+}
+
+/* b: floating on the top of the field; the zoom buttons move to the bottom. */
+.quick-b {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.quick-b .quick-tile {
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+.stage.ui-b .canvas-tools {
+  top: auto;
+  bottom: 10px;
+}
+
+.stage.ui-b .stage-hint {
+  display: none;
+}
+
+/* c: a dock under the field, with thumb-sized buttons. */
+.quick-c {
+  border-top: 1px solid var(--line);
+}
+
+.quick-c .quick-combo button {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  font-size: 15px;
+}
+
+@media (max-width: 820px) {
+  /* The dock stays pinned to the bottom of the screen while the field is in view. */
+  .quick-c {
+    position: sticky;
+    bottom: 0;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+  }
+}
+
+@media (min-width: 821px) {
+  .quick-combo button {
+    flex: 0 1 160px;
+  }
+}
+
+@media (max-width: 820px) {
+  /* The field and its controls fill the screen; the settings are a scroll away. */
+  .topbar {
+    height: 46px;
+  }
+
+  .stage {
+    height: calc(100dvh - 46px);
+  }
+
+  .stats {
+    gap: 4px 12px;
+    padding: 6px 12px;
+  }
+}
+
+@media (max-width: 820px) {
+  .quick .quick-label,
+  .quick-size .long {
+    display: none;
+  }
+
+  .quick-size .short {
+    display: inline;
+  }
+
+  .quick-size {
+    padding: 2px 6px;
+  }
+}
+
+@media (max-width: 820px) {
+  /* On a phone the magnified tile is a sheet over the bottom of the screen. */
+  .tile-editor-pop {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    transform: none;
+    border-radius: 14px 14px 0 0;
+    border-bottom: none;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
 }
