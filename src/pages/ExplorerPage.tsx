@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { computeCircuits, type CircuitResult } from '../core/circuits';
+import { computeCircuits, layChords, type CircuitResult } from '../core/circuits';
 import { choiceCount, MAX_ENUMERATED_CROSSINGS } from '../core/matchings';
 import { analyzeParity, basisCoords, crossingCounts } from '../core/parity';
 import { className, computeAdjacency, ruleSetClasses, type RuleSet } from '../core/ruleset';
@@ -9,7 +9,7 @@ import { InfinitePlane, meanTileArea, supportsInfinite, type Rect } from '../cor
 import { qkey } from '../core/polygon';
 import { StrandChase, type ChaseStatus } from '../core/chase';
 import type { Tiling } from '../core/tiling';
-import { PatchCanvas, pathColors } from '../components/PatchCanvas';
+import { PatchCanvas, TRAIL_RAINBOW_PERIOD, pathColors } from '../components/PatchCanvas';
 import { TileEditor } from '../components/TileEditor';
 import { TileGlyph } from '../components/TileGlyph';
 import { classColor } from '../colors';
@@ -103,12 +103,17 @@ export function ExplorerPage({ route }: Props) {
   const [showClassEdges, setShowClassEdges] = useState(false);
   const [lineWidth, setLineWidth] = useState(1);
   const [screenTiles, setScreenTiles] = useStoredNumber('infinite-screen-tiles', INFINITE_SCREEN_TILES, (n) => SCREEN_TILE_OPTIONS.includes(n));
+  // Past this many tiles infinite mode draws the lines without following them.
+  const [traceLimit, setTraceLimit] = useStoredNumber('infinite-trace-limit', TRACE_LIMIT, (n) => TRACE_LIMIT_OPTIONS.includes(n));
   // Chasing a picked line (infinite mode), as on the Spectre project's map.
   const [chaseOn, setChaseOn] = useStoredFlag('chase', true);
   const [fullSpeed, setFullSpeed] = useStoredFlag('chase-full-speed', true);
   const [pace, setPace] = useStoredNumber('chase-pace', 24, (n) => n >= 1 && n <= 240);
   const [damping, setDamping] = useStoredNumber('chase-damping', 1, (n) => n >= MIN_DAMPING && n <= MAX_DAMPING);
   const [hold, setHold] = useStoredNumber('chase-hold', 0, (n) => n >= 0 && Number.isInteger(n));
+  // The traced line's rainbow: cycling every few hundred tiles, or one
+  // gradient stretched over the whole line (the Spectre map's way).
+  const [stretchRainbow, setStretchRainbow] = useStoredFlag('trail-rainbow-stretch', false);
   const [chase, setChase] = useState<StrandChase | null>(null);
   const [chaseInfo, setChaseInfo] = useState<{ steps: number; status: ChaseStatus } | null>(null);
 
@@ -140,9 +145,14 @@ export function ExplorerPage({ route }: Props) {
     if (!plane) return tiling.generate(level, root);
     return plane.query(grownRect, Math.ceil(screenTiles * INFINITE_QUERY_FACTOR)).instances;
   }, [plane, tiling, level, root, grownRect, screenTiles]);
-  const adjacency = useMemo(() => computeAdjacency(tiling, instances), [tiling, instances]);
+  // Matching the tiles up and following every line is most of what a regrow
+  // costs, so a big infinite view only lays the chords, as the Spectre map
+  // does past its circuit ceiling: the lines show, uncoloured, and a click
+  // still chases one.
+  const trace = !infinite || instances.length <= traceLimit;
+  const adjacency = useMemo(() => (trace ? computeAdjacency(tiling, instances) : null), [trace, tiling, instances]);
   const circuits: CircuitResult = useMemo(
-    () => computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }),
+    () => (adjacency ? computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }) : layChords({ tiling, ruleSet, instances, selection, combo })),
     [tiling, ruleSet, instances, selection, combo, adjacency],
   );
   // Same tiles and crossings, so a new pairing animates on the canvas.
@@ -163,7 +173,7 @@ export function ExplorerPage({ route }: Props) {
     const want = new Set(pickedAt);
     for (let i = 0; i < circuits.chords.length; i++) {
       const ch = circuits.chords[i];
-      if (want.has(qkey(ch.a, 1e3)) || want.has(qkey(ch.b, 1e3))) return circuits.pathOfChord[i];
+      if (want.has(qkey(ch.a, 1e3)) || want.has(qkey(ch.b, 1e3))) return circuits.pathOfChord[i] >= 0 ? circuits.pathOfChord[i] : null;
     }
     return null;
   }, [pickedAt, circuits]);
@@ -423,6 +433,27 @@ export function ExplorerPage({ route }: Props) {
                   <input type="checkbox" checked={fullSpeed} disabled={!chaseOn} onChange={(e) => setFullSpeed(e.target.checked)} /> Full speed
                 </label>
               </div>
+              <div className="row" role="group" aria-label="Rainbow of the traced line">
+                <span className="hint">Rainbow</span>
+                <button
+                  type="button"
+                  className={!stretchRainbow ? 'on' : ''}
+                  onClick={() => setStretchRainbow(false)}
+                  aria-pressed={!stretchRainbow}
+                  title={`Red to violet and back every ${TRAIL_RAINBOW_PERIOD} tiles, so nearby stretches of the line tell apart`}
+                >
+                  Repeating
+                </button>
+                <button
+                  type="button"
+                  className={stretchRainbow ? 'on' : ''}
+                  onClick={() => setStretchRainbow(true)}
+                  aria-pressed={stretchRainbow}
+                  title="One gradient over the whole line, red at the start to violet at the head, restretching as it grows (as on the Spectre map)"
+                >
+                  Whole line
+                </button>
+              </div>
               {chaseOn && (
                 <>
                   {!fullSpeed && (
@@ -477,6 +508,19 @@ export function ExplorerPage({ route }: Props) {
                     {SCREEN_TILE_OPTIONS.map((n) => (
                       <option key={n} value={n}>
                         about {n.toLocaleString()} tiles on screen{n === INFINITE_SCREEN_TILES ? ' (default)' : n > INFINITE_SCREEN_TILES ? ' (slow)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label
+                  className="field"
+                  title="Up to this many tiles in view, every line is followed and circuits are coloured by length. Past it the lines are still drawn, in one colour, and a click still chases one; panning is much quicker."
+                >
+                  <span>Colour circuits up to</span>
+                  <select value={traceLimit} onChange={(e) => setTraceLimit(Number(e.target.value))}>
+                    {TRACE_LIMIT_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n === TRACE_LIMIT_OPTIONS[TRACE_LIMIT_OPTIONS.length - 1] ? 'always (slow)' : `${n.toLocaleString()} tiles in view${n === TRACE_LIMIT ? ' (default)' : n > TRACE_LIMIT ? ' (slow)' : ''}`}
                       </option>
                     ))}
                   </select>
@@ -573,18 +617,27 @@ export function ExplorerPage({ route }: Props) {
           onViewChange={infinite ? onViewChange : undefined}
           zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
           selectedRainbow={infinite}
+          trailRainbow={stretchRainbow ? 'stretch' : 'repeat'}
           insets={topHeight === null || bottomHeight === null ? undefined : { top: topHeight, bottom: bottomHeight }}
           morphKey={morphKey}
         />
         <div className="stage-bottom" ref={bottomRef}>
         {quick}
         <div className="stats">
-          <span>
-            <b>{circuits.circuits.toLocaleString()}</b> circuits
-          </span>
-          <span>
-            <b>{circuits.openLines.toLocaleString()}</b> open
-          </span>
+          {circuits.untraced ? (
+            <span className="hint" title="Zoom in, or raise “Colour circuits up to” under Infinite › Advanced">
+              Circuits not coloured: {instances.length.toLocaleString()} tiles in view, over the {traceLimit.toLocaleString()} limit
+            </span>
+          ) : (
+            <>
+              <span>
+                <b>{circuits.circuits.toLocaleString()}</b> circuits
+              </span>
+              <span>
+                <b>{circuits.openLines.toLocaleString()}</b> open
+              </span>
+            </>
+          )}
           {circuits.tails > 0 && (
             <span className="bad">
               <b>{circuits.tails.toLocaleString()}</b> with tails
@@ -640,6 +693,10 @@ const INITIAL_VIEW: Rect = { minX: -16, minY: -16, maxX: 16, maxY: 16 };
 /** By default zoom-out stops at about this many tiles on screen (Advanced can change it)… */
 const INFINITE_SCREEN_TILES = 50_000;
 const SCREEN_TILE_OPTIONS = [10_000, 25_000, 50_000, 100_000, 200_000];
+/** Infinite mode follows every line and colours circuits up to this many tiles (Advanced can change it). */
+const TRACE_LIMIT = 10_000;
+// The last is past any query's size (200k on screen × 1.75): always.
+const TRACE_LIMIT_OPTIONS = [2_000, 5_000, 10_000, 25_000, 50_000, 350_000];
 /** …and a query returns at most this multiple of it (the screen plus a 15% margin each side). */
 const INFINITE_QUERY_FACTOR = 1.75;
 const MIN_DAMPING = 0.25;

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { BUILTIN_TILINGS } from '../tilings';
 import { InfinitePlane } from '../infinite';
 import { computeAdjacency } from '../ruleset';
-import { computeCircuits } from '../circuits';
+import { computeCircuits, layChords } from '../circuits';
+import { defaultRuleSet } from '../../store';
+import { analyzeParity } from '../parity';
 import { hexTiling } from '../tilings/spectre';
 import { latticeTiling } from '../lattice';
 import { LATTICE_PRESETS } from '../latticePresets';
@@ -71,5 +73,20 @@ describe('infinite mode', () => {
     expect(r.circuits).toBe(0);
     expect(r.tails).toBe(0);
     expect(r.openLines).toBeGreaterThan(0);
+  });
+
+  it('laying the chords without tracing gives the same chords, untraced', () => {
+    for (const t of BUILTIN_TILINGS) {
+      const rs = defaultRuleSet(t);
+      const selection = new Set(analyzeParity(t, rs, 64).selections.find((s) => s.length > 0) ?? []);
+      const { instances } = new InfinitePlane(t, t.defaultRoot).query({ minX: -10, minY: -10, maxX: 10, maxY: 10 });
+      const full = computeCircuits({ tiling: t, ruleSet: rs, instances, selection, combo: {} });
+      const laid = layChords({ tiling: t, ruleSet: rs, instances, selection, combo: {} });
+      expect(laid.untraced, t.id).toBe(true);
+      expect(laid.paths.length, t.id).toBe(0);
+      expect(laid.oddTypes, t.id).toEqual(full.oddTypes);
+      expect(laid.chords, t.id).toEqual(full.chords);
+      expect([...laid.pathOfChord].every((p) => p === -1), t.id).toBe(true);
+    }
   });
 });

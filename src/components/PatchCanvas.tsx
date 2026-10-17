@@ -33,6 +33,12 @@ export interface PatchCanvasProps {
   readonly zoomLimit?: { readonly tileArea: number; readonly maxTiles: number };
   /** Draw the picked line as a rainbow from end to end (infinite mode's traced strand). */
   readonly selectedRainbow?: boolean;
+  /**
+   * How the traced line's rainbow runs: 'repeat' cycles red to violet and
+   * back every {@link TRAIL_RAINBOW_PERIOD} tiles; 'stretch' spreads one
+   * gradient over the whole line held, restretching as it grows.
+   */
+  readonly trailRainbow?: TrailRainbow;
   /** A line being chased: walked on, drawn as a trail over everything, with the camera riding its head. */
   readonly chase?: StrandChase | null;
   /** Chase pace in tiles per second, or null to go as fast as the camera can follow. */
@@ -54,18 +60,46 @@ export interface PatchCanvasProps {
   readonly insets?: { readonly top: number; readonly bottom: number };
 }
 
-/** The chase trail's rainbow runs red to violet and back every this many tiles. */
-const TRAIL_PERIOD = 600;
+export type TrailRainbow = 'repeat' | 'stretch';
+
+/** The repeating rainbow runs red to violet and back every this many tiles. */
+export const TRAIL_RAINBOW_PERIOD = 600;
 /** Trail chords per drawing chunk. */
 const TRAIL_CHUNK = 512;
+/**
+ * Trail chords per piece of a chunk, for the stretched rainbow: its colours
+ * move as the line grows, so they can't be baked in. Each piece is stroked in
+ * the colour of where it now sits along the line.
+ */
+const TRAIL_PIECE = 8;
+/** With more pieces than this on screen, a whole chunk takes one colour. */
+const MAX_TRAIL_PIECES = 2000;
+/** Colour steps along a rainbow. */
+const RAINBOW_STEPS = 47;
 
 interface TrailChunk {
   minX: number;
   minY: number;
   maxX: number;
   maxY: number;
+  /** The line's index of the chunk's first chord. */
+  readonly base: number;
   readonly all: Path2D;
+  /** 'repeat': the chunk's chords by colour. */
   readonly buckets: Map<string, Path2D>;
+  /** 'stretch': the chunk's chords in runs of TRAIL_PIECE. */
+  readonly pieces: Path2D[];
+}
+
+/** The repeating rainbow's colour for the line's g-th chord. */
+function repeatingRainbow(g: number): string {
+  const u = (g / TRAIL_RAINBOW_PERIOD) % 2;
+  return rainbow(Math.round((u < 1 ? u : 2 - u) * RAINBOW_STEPS) / RAINBOW_STEPS);
+}
+
+/** The stretched rainbow's colour at fraction t of the way along the line. */
+function stretchedRainbow(t: number): string {
+  return rainbow(Math.round(Math.max(0, Math.min(1, t)) * RAINBOW_STEPS) / RAINBOW_STEPS);
 }
 
 export interface WorldRect {
@@ -142,7 +176,7 @@ function chordWidth(scale: number, lineWidth = 1): number {
 }
 
 export function PatchCanvas(props: PatchCanvasProps) {
-  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath, chase = null } = props;
+  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath, chase = null, trailRainbow = 'repeat' } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 });
@@ -222,33 +256,40 @@ export function PatchCanvas(props: PatchCanvasProps) {
       const ch = circuits.chords[ci];
       p.moveTo(ch.a.x, ch.a.y);
       p.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
-      const col = rainbow(chords.length > 1 ? Math.round((k / (chords.length - 1)) * 63) / 63 : 0);
+      const col = trailRainbow === 'repeat' ? repeatingRainbow(k) : stretchedRainbow(chords.length > 1 ? k / (chords.length - 1) : 0);
       let b = buckets.get(col);
       if (!b) buckets.set(col, (b = new Path2D()));
       b.moveTo(ch.a.x, ch.a.y);
       b.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
     });
     return { all: p, buckets };
-  }, [circuits, selectedPath]);
+  }, [circuits, selectedPath, trailRainbow]);
 
   // The chase trail, kept as Path2Ds in chunks of consecutive chords that
   // are only ever appended to, so a frame strokes just the chunks on screen
-  // and the hold drops whole chunks off the back.
-  const trail = useRef<{ chase: StrandChase; built: number; chunks: Map<number, TrailChunk> } | null>(null);
+  // and the hold drops whole chunks off the back. A change of rainbow
+  // rebuilds them from the chords held.
+  const trail = useRef<{ chase: StrandChase; mode: TrailRainbow; built: number; chunks: Map<number, TrailChunk> } | null>(null);
   const drawTrail = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
     if (!chase) return;
     let T = trail.current;
-    if (!T || T.chase !== chase) T = trail.current = { chase, built: 0, chunks: new Map() };
+    if (!T || T.chase !== chase || T.mode !== trailRainbow) T = trail.current = { chase, mode: trailRainbow, built: 0, chunks: new Map() };
     const end = chase.dropped + chase.chords;
     for (let g = Math.max(T.built, chase.dropped); g < end; g++) {
       const ch = chase.chord(g - chase.dropped);
       const k = Math.floor(g / TRAIL_CHUNK);
       let C = T.chunks.get(k);
-      if (!C) T.chunks.set(k, (C = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, all: new Path2D(), buckets: new Map() }));
-      const u = (g / TRAIL_PERIOD) % 2;
-      const col = rainbow(Math.round((u < 1 ? u : 2 - u) * 47) / 47);
-      let b = C.buckets.get(col);
-      if (!b) C.buckets.set(col, (b = new Path2D()));
+      if (!C) T.chunks.set(k, (C = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, base: k * TRAIL_CHUNK, all: new Path2D(), buckets: new Map(), pieces: [] }));
+      let b: Path2D;
+      if (T.mode === 'repeat') {
+        const col = repeatingRainbow(g);
+        let hit = C.buckets.get(col);
+        if (!hit) C.buckets.set(col, (hit = new Path2D()));
+        b = hit;
+      } else {
+        const i = Math.floor((g % TRAIL_CHUNK) / TRAIL_PIECE);
+        b = C.pieces[i] ??= new Path2D();
+      }
       for (const q of [C.all, b]) {
         q.moveTo(ch.a.x, ch.a.y);
         q.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
@@ -286,10 +327,29 @@ export function PatchCanvas(props: PatchCanvasProps) {
       // Its head is back at the start: a marker there would read as a gap in the loop.
       return;
     }
-    for (const C of shown) {
-      for (const [col, b] of C.buckets) {
-        ctx.strokeStyle = col;
-        ctx.stroke(b);
+    if (T.mode === 'repeat') {
+      for (const C of shown) {
+        for (const [col, b] of C.buckets) {
+          ctx.strokeStyle = col;
+          ctx.stroke(b);
+        }
+      }
+    } else {
+      // Red at the oldest chord held, violet at the head: each piece in the
+      // colour of where it now sits, or each chunk when too many show.
+      const held = Math.max(1, chase.chords - 1);
+      const at = (g: number) => stretchedRainbow((g - chase.dropped) / held);
+      const fine = shown.length * (TRAIL_CHUNK / TRAIL_PIECE) <= MAX_TRAIL_PIECES;
+      for (const C of shown) {
+        if (!fine) {
+          ctx.strokeStyle = at(C.base + TRAIL_CHUNK / 2);
+          ctx.stroke(C.all);
+          continue;
+        }
+        C.pieces.forEach((p, i) => {
+          ctx.strokeStyle = at(C.base + i * TRAIL_PIECE + TRAIL_PIECE / 2);
+          ctx.stroke(p);
+        });
       }
     }
     const hd = chase.headPt;
@@ -479,7 +539,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     snapshot.current = { canvas: snap, view: { ...v }, ms: performance.now() - t0 };
     drawTrail(ctx, canvas);
     reportView();
-  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase]);
+  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase, trailRainbow]);
 
   // Tell the owner what's on screen once the view stops moving.
   const viewTimer = useRef(0);
