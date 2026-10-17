@@ -148,8 +148,10 @@ export function ExplorerPage({ route }: Props) {
   // Matching the tiles up and following every line is most of what a regrow
   // costs, so a big infinite view only lays the chords, as the Spectre map
   // does past its circuit ceiling: the lines show, uncoloured, and a click
-  // still chases one.
-  const trace = !infinite || instances.length <= traceLimit;
+  // still chases one. Nor does a running chase trace: it regrows the view
+  // every moment, and the lines behind the trail are dimmed anyway.
+  const chasing = chaseInfo?.status === 'running';
+  const trace = !infinite || (instances.length <= traceLimit && !chasing);
   const adjacency = useMemo(() => (trace ? computeAdjacency(tiling, instances) : null), [trace, tiling, instances]);
   const circuits: CircuitResult = useMemo(
     () => (adjacency ? computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }) : layChords({ tiling, ruleSet, instances, selection, combo })),
@@ -624,7 +626,7 @@ export function ExplorerPage({ route }: Props) {
         <div className="stage-bottom" ref={bottomRef}>
         {quick}
         <div className="stats">
-          {circuits.untraced ? (
+          {circuits.untraced && chasing ? null : circuits.untraced ? (
             <span className="hint" title="Zoom in, or raise “Colour circuits up to” under Infinite › Advanced">
               Circuits not coloured: {instances.length.toLocaleString()} tiles in view, over the {traceLimit.toLocaleString()} limit
             </span>

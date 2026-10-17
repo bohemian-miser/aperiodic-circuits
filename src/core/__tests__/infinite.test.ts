@@ -8,7 +8,7 @@ import { analyzeParity } from '../parity';
 import { hexTiling } from '../tilings/spectre';
 import { latticeTiling } from '../lattice';
 import { LATTICE_PRESETS } from '../latticePresets';
-import { qkey } from '../polygon';
+import { pointKeyer, qkey } from '../polygon';
 import { transPt } from '../geom';
 import { prototile } from '../tiling';
 
@@ -88,5 +88,13 @@ describe('infinite mode', () => {
       expect(laid.chords, t.id).toEqual(full.chords);
       expect([...laid.pathOfChord].every((p) => p === -1), t.id).toBe(true);
     }
+  });
+
+  it('point keys agree far from the origin and fall back to strings past their range', () => {
+    const key = pointKeyer({ x: 1e5, y: -1e5 });
+    expect(key(1e5 + 0.1234, -1e5 + 2)).toBe(key(1e5 + 0.12341, -1e5 + 2.00001));
+    expect(typeof key(1e5 + 1, -1e5)).toBe('number');
+    expect(typeof key(1e5 + 1e5, -1e5)).toBe('string');
+    expect(key(1e5 + 1e5, -1e5)).toBe(key(1e5 + 1e5 + 1e-5, -1e5));
   });
 });

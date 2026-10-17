@@ -183,14 +183,11 @@ export function PatchCanvas(props: PatchCanvasProps) {
   const frame = useRef(0);
   const size = useRef({ w: 1, h: 1 });
 
-  // Geometry batched into a few Path2Ds so redraws stay cheap.
+  // Geometry batched into a few Path2Ds so redraws stay cheap. The edges are
+  // only built once something draws them: zoomed well out (infinite mode
+  // regrowing 100,000 tiles as you pan) nothing does.
   const geo = useMemo(() => {
     const fills = new Map<string, Path2D>();
-    const outline = new Path2D();
-    const hidden = new Path2D();
-    const byClass = new Map<number, Path2D>();
-    const seamIdx = new Map<string, number[]>();
-    if (ruleSet) for (const p of tiling.prototiles) seamIdx.set(p.id, edgeSeamIndex(ruleSet, p.id, p.pts.length));
     for (const inst of instances) {
       const proto = prototile(tiling, inst.type);
       const pts = instancePts(tiling, inst);
@@ -200,24 +197,37 @@ export function PatchCanvas(props: PatchCanvasProps) {
       // No closePath: fill closes each subpath anyway, and closePath gets slow
       // on a Path2D holding tens of thousands of them.
       for (let i = 1; i < pts.length; i++) f.lineTo(pts[i].x, pts[i].y);
-      const hid = proto.hiddenEdges;
-      const soe = seamIdx.get(inst.type);
-      for (let e = 0; e < pts.length; e++) {
-        const a = pts[e];
-        const b = pts[(e + 1) % pts.length];
-        const target = hid?.includes(e) ? hidden : outline;
-        target.moveTo(a.x, a.y);
-        target.lineTo(b.x, b.y);
-        if (soe && soe[e] >= 0) {
-          const cls = ruleSet!.seams[inst.type][soe[e]].cls;
-          let cp = byClass.get(cls);
-          if (!cp) byClass.set(cls, (cp = new Path2D()));
-          cp.moveTo(a.x, a.y);
-          cp.lineTo(b.x, b.y);
+    }
+    let edges: { outline: Path2D; hidden: Path2D; byClass: Map<number, Path2D> } | null = null;
+    const getEdges = () => {
+      if (edges) return edges;
+      const outline = new Path2D();
+      const hidden = new Path2D();
+      const byClass = new Map<number, Path2D>();
+      const seamIdx = new Map<string, number[]>();
+      if (ruleSet) for (const p of tiling.prototiles) seamIdx.set(p.id, edgeSeamIndex(ruleSet, p.id, p.pts.length));
+      for (const inst of instances) {
+        const pts = instancePts(tiling, inst);
+        const hid = prototile(tiling, inst.type).hiddenEdges;
+        const soe = seamIdx.get(inst.type);
+        for (let e = 0; e < pts.length; e++) {
+          const a = pts[e];
+          const b = pts[(e + 1) % pts.length];
+          const target = hid?.includes(e) ? hidden : outline;
+          target.moveTo(a.x, a.y);
+          target.lineTo(b.x, b.y);
+          if (soe && soe[e] >= 0) {
+            const cls = ruleSet!.seams[inst.type][soe[e]].cls;
+            let cp = byClass.get(cls);
+            if (!cp) byClass.set(cls, (cp = new Path2D()));
+            cp.moveTo(a.x, a.y);
+            cp.lineTo(b.x, b.y);
+          }
         }
       }
-    }
-    return { fills, outline, hidden, byClass, bounds: patchBounds(tiling, instances) };
+      return (edges = { outline, hidden, byClass });
+    };
+    return { fills, edges: getEdges, bounds: patchBounds(tiling, instances) };
   }, [tiling, instances, ruleSet]);
 
   const chordGeo = useMemo(() => {
@@ -398,17 +408,17 @@ export function PatchCanvas(props: PatchCanvasProps) {
       if (showOutlines && v.scale > 2) {
         c.strokeStyle = cssVar(canvas, '--tile-edge', 'rgba(40,40,40,0.55)');
         c.lineWidth = Math.min(1.2, v.scale / 12) * px;
-        c.stroke(geo.outline);
+        c.stroke(geo.edges().outline);
         c.save();
         c.globalAlpha = 0.35;
         c.setLineDash([3 * px, 3 * px]);
-        c.stroke(geo.hidden);
+        c.stroke(geo.edges().hidden);
         c.restore();
       }
       if (classEdges) {
         c.lineWidth = Math.max(1.5 * px, Math.min(0.12, 5 * px));
         c.lineCap = 'round';
-        for (const [cls, p] of geo.byClass) {
+        for (const [cls, p] of geo.edges().byClass) {
           if (classEdges !== 'all' && !classEdges.has(cls)) continue;
           c.strokeStyle = classColor(cls);
           c.stroke(p);

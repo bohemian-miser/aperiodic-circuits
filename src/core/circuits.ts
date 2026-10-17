@@ -10,7 +10,7 @@
  */
 
 import { lerpPt, transPt, type Pt } from './geom';
-import { polygonCentroid, qkey } from './polygon';
+import { pointKeyer, polygonCentroid } from './polygon';
 import { computeAdjacency, seamCenter, type Adjacency, type RuleSet } from './ruleset';
 import { nonCrossingMatching } from './matchings';
 import { prototile, type TileInstance, type Tiling } from './tiling';
@@ -115,70 +115,107 @@ export function computeCircuits(input: CircuitInput): CircuitResult {
   const local = new Map<string, ReturnType<typeof localChords>>();
   for (const p of t.prototiles) local.set(p.id, localChords(t, rs, p.id, selection, input.combo[p.id] ?? 0));
 
-  // Crossing points: how many tiles register each one, and whether any of
-  // them sits on the patch boundary.
-  const seen = new Map<string, number>();
-  const onBoundary = new Set<string>();
+  // Crossing points ("nodes", numbered as first met): how many tiles
+  // register each one, and whether any of them sits on the patch boundary.
+  const o = instances.length ? transPt(instances[0].xform, prototile(t, instances[0].type).pts[0]) : { x: 0, y: 0 };
+  const key = pointKeyer(o);
+  const nodeOf = new Map<number | string, number>();
+  const node = (p: Pt): number => {
+    const k = key(p.x, p.y);
+    let n = nodeOf.get(k);
+    if (n === undefined) nodeOf.set(k, (n = nodeOf.size));
+    return n;
+  };
+  // Per type: its active seams, in the order localChords numbers its points.
+  const activeOf = new Map(t.prototiles.map((p) => [p.id, (rs.seams[p.id] ?? []).filter((s) => selection.has(s.cls))]));
+  const seenList: number[] = [];
+  const boundaryList: number[] = [];
   const chords: Chord[] = [];
-  const ends: [string, string][] = [];
+  const endList: number[] = [];
   for (const inst of instances) {
     const L = local.get(inst.type)!;
-    const active = (rs.seams[inst.type] ?? []).filter((s) => selection.has(s.cls));
+    const active = activeOf.get(inst.type) ?? [];
     const row = adj.neighbour[inst.id];
-    active.forEach((s, i) => {
-      const k = qkey(transPt(inst.xform, L.points[i]), 1e3);
-      seen.set(k, (seen.get(k) ?? 0) + 1);
-      if (s.edges.some((e) => !row?.[e])) onBoundary.add(k);
-    });
+    for (let i = 0; i < active.length; i++) {
+      const n = node(transPt(inst.xform, L.points[i]));
+      seenList.push(n);
+      if (active[i].edges.some((e) => !row?.[e])) boundaryList.push(n);
+    }
     for (const ch of L.chords) {
       const a = transPt(inst.xform, ch.a);
       const b = transPt(inst.xform, ch.b);
       chords.push({ inst: inst.id, a, b, c: transPt(inst.xform, ch.c) });
-      ends.push([qkey(a, 1e3), qkey(b, 1e3)]);
+      endList.push(node(a), node(b));
     }
   }
+  const N = nodeOf.size;
+  const seen = new Int32Array(N);
+  for (const n of seenList) seen[n]++;
+  const onBoundary = new Uint8Array(N);
+  for (const n of boundaryList) onBoundary[n] = 1;
+  const ends = Int32Array.from(endList);
 
-  // Node -> incident chords.
-  const inc = new Map<string, number[]>();
-  ends.forEach(([ka, kb], i) => {
-    for (const k of [ka, kb]) {
-      let l = inc.get(k);
-      if (!l) inc.set(k, (l = []));
-      l.push(i);
+  // Node -> incident chords: two slots each (a crossing joins two tiles),
+  // with a spill list for anything odder.
+  const inc0 = new Int32Array(N).fill(-1);
+  const inc1 = new Int32Array(N).fill(-1);
+  const deg = new Int32Array(N);
+  const spill = new Map<number, number[]>();
+  // Nodes in the order the chords first meet them.
+  const order: number[] = [];
+  for (let e = 0; e < ends.length; e++) {
+    const n = ends[e];
+    const ci = e >> 1;
+    if (deg[n] === 0) {
+      order.push(n);
+      inc0[n] = ci;
+    } else if (deg[n] === 1) inc1[n] = ci;
+    else {
+      const l = spill.get(n);
+      if (l) l.push(ci);
+      else spill.set(n, [ci]);
     }
-  });
+    deg[n]++;
+  }
 
-  const endKind = (k: string): EndKind => (onBoundary.has(k) && (seen.get(k) ?? 0) < 2 ? 'boundary' : 'tail');
+  const endKind = (n: number): EndKind => (onBoundary[n] && seen[n] < 2 ? 'boundary' : 'tail');
 
   const pathOfChord = new Int32Array(chords.length).fill(-1);
+  const unwalked = (n: number): number => {
+    if (inc0[n] >= 0 && pathOfChord[inc0[n]] === -1) return inc0[n];
+    if (inc1[n] >= 0 && pathOfChord[inc1[n]] === -1) return inc1[n];
+    for (const j of spill.get(n) ?? []) if (pathOfChord[j] === -1) return j;
+    return -1;
+  };
   const paths: Path[] = [];
-  const walk = (startNode: string, startChord: number): { list: number[]; end: string; closed: boolean } => {
+  const walk = (startNode: number, startChord: number): { list: number[]; end: number; closed: boolean } => {
     const list: number[] = [];
-    let node = startNode;
+    let at = startNode;
     let ci = startChord;
     for (;;) {
       list.push(ci);
       pathOfChord[ci] = paths.length;
-      const [ka, kb] = ends[ci];
-      const next = ka === node ? kb : ka;
+      const ka = ends[2 * ci];
+      const kb = ends[2 * ci + 1];
+      const next = ka === at ? kb : ka;
       if (next === startNode) return { list, end: next, closed: true };
-      const cont = (inc.get(next) ?? []).find((j) => pathOfChord[j] === -1);
-      if (cont === undefined) return { list, end: next, closed: false };
-      node = next;
+      const cont = unwalked(next);
+      if (cont < 0) return { list, end: next, closed: false };
+      at = next;
       ci = cont;
     }
   };
 
   // Open lines first, from their degree-1 ends.
-  for (const [k, l] of inc) {
-    if (l.length !== 1 || pathOfChord[l[0]] !== -1) continue;
-    const r = walk(k, l[0]);
-    paths.push({ chords: r.list, closed: false, ends: [endKind(k), endKind(r.end)] });
+  for (const n of order) {
+    if (deg[n] !== 1 || pathOfChord[inc0[n]] !== -1) continue;
+    const r = walk(n, inc0[n]);
+    paths.push({ chords: r.list, closed: false, ends: [endKind(n), endKind(r.end)] });
   }
   // Whatever is left is closed.
   for (let i = 0; i < chords.length; i++) {
     if (pathOfChord[i] !== -1) continue;
-    const r = walk(ends[i][0], i);
+    const r = walk(ends[2 * i], i);
     paths.push({ chords: r.list, closed: r.closed, ends: r.closed ? [] : ['tail', 'tail'] });
   }
 
@@ -196,3 +233,4 @@ export function computeCircuits(input: CircuitInput): CircuitResult {
   const oddTypes = t.prototiles.filter((p) => local.get(p.id)!.odd).map((p) => p.id);
   return { chords, paths, pathOfChord, circuits, openLines, tails, circuitLengths, oddTypes };
 }
+
