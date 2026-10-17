@@ -948,13 +948,12 @@ h3.sub {
   color: var(--muted);
 }
 
-/* Explorer quick controls: the edge picker and combination stepper by the field. */
+/* Explorer quick controls: edges, each tile's pairing, and a pairing stepper by the field. */
 
 .quick {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px 12px;
   background: var(--panel);
   z-index: 2;
@@ -962,16 +961,23 @@ h3.sub {
 
 .quick-edges {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  gap: 5px;
+}
+
+.quick-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
 }
 
 .quick-edges .chip {
-  flex-shrink: 0;
-  padding: 3px 9px;
+  min-width: 30px;
+  padding: 2px 8px;
 }
 
 .quick-dot {
@@ -989,22 +995,67 @@ h3.sub {
   background: var(--danger);
 }
 
+.quick-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
+  gap: 5px;
+}
+
+.quick-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.quick-tile-ctl {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-tile-ctl button {
+  padding: 0 5px;
+  line-height: 18px;
+}
+
 .quick-combo {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+}
+
+.quick-combo button {
+  flex: 1;
+}
+
+.quick-combo button[aria-label] {
+  flex: 0 0 auto;
+  padding-left: 14px;
+  padding-right: 14px;
 }
 
 .quick-count {
-  min-width: 56px;
+  min-width: 52px;
   text-align: center;
-  font-size: 12.5px;
+  font-size: 11px;
+  line-height: 1.2;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
-/* a: a strip above the field. */
+.quick-count b {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+/* a: a panel above the field. */
 .quick-a {
   border-bottom: 1px solid var(--line);
 }
@@ -1017,9 +1068,13 @@ h3.sub {
   right: 8px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
   backdrop-filter: blur(6px);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.quick-b .quick-tile {
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
 }
 
 .stage.ui-b .canvas-tools {
@@ -1033,37 +1088,16 @@ h3.sub {
 
 /* c: a dock under the field, with thumb-sized buttons. */
 .quick-c {
-  flex-direction: column;
-  align-items: stretch;
   border-top: 1px solid var(--line);
 }
 
-.quick-c .quick-combo {
-  margin-left: 0;
-}
-
 .quick-c .quick-combo button {
-  flex: 1;
-  padding: 10px 0;
+  padding-top: 10px;
+  padding-bottom: 10px;
   font-size: 15px;
 }
 
-.quick-combo button[aria-label] {
-  flex: 0 0 auto;
-  padding-left: 14px;
-  padding-right: 14px;
-}
-
 @media (max-width: 820px) {
-  .quick-combo {
-    margin-left: 0;
-    width: 100%;
-  }
-
-  .quick-combo button {
-    flex: 1;
-  }
-
   /* The dock stays pinned to the bottom of the screen while the field is in view. */
   .quick-c {
     position: sticky;

@@ -253,12 +253,16 @@ export function ExplorerPage({ route }: Props) {
   const quick = (
     <QuickControls
       className={`quick quick-${ui}`}
+      tiling={tiling}
       ruleSet={ruleSet}
       classes={classes}
       selection={selection}
       onToggle={toggleClass}
       tailFree={isTailFree}
       oddTypes={circuits.oddTypes}
+      counts={counts}
+      combo={combo}
+      onStepTile={stepCombo}
       index={comboIndex}
       total={totalCombos}
       onRandom={randomCombo}
@@ -576,7 +580,7 @@ export function ExplorerPage({ route }: Props) {
                         ‹
                       </button>
                       <span>
-                        {(combo[q.id] ?? 0) % choices}/{choices}
+                        {((combo[q.id] ?? 0) % choices) + 1}/{choices}
                       </span>
                       <button type="button" onClick={() => stepCombo(q.id, 1)} aria-label={`Next pairing for ${q.name}`}>
                         ›
@@ -718,23 +722,32 @@ function describeChase(c: { steps: number; status: ChaseStatus }): string {
 
 interface QuickProps {
   readonly className: string;
+  readonly tiling: Tiling;
   readonly ruleSet: RuleSet;
   readonly classes: readonly number[];
   readonly selection: ReadonlySet<number>;
   readonly onToggle: (c: number) => void;
   readonly tailFree: boolean;
   readonly oddTypes: readonly string[];
+  readonly counts: Record<string, number>;
+  readonly combo: Record<string, number>;
+  readonly onStepTile: (type: string, d: number) => void;
   readonly index: number;
   readonly total: number;
   readonly onRandom: () => void;
   readonly onStep: (d: number) => void;
 }
 
-/** The edge picker and combination stepper, kept next to the field so you can watch it change. */
-function QuickControls({ className: cls, ruleSet, classes, selection, onToggle, tailFree, oddTypes, index, total, onRandom, onStep }: QuickProps) {
+/**
+ * The edge picker, each tile's pairing, and a stepper through every pairing
+ * of the picked edges, kept by the field so you can watch it change.
+ */
+function QuickControls(props: QuickProps) {
+  const { className: cls, tiling, ruleSet, classes, selection, onToggle, tailFree, oddTypes, counts, combo, onStepTile, index, total, onRandom, onStep } = props;
   return (
     <div className={cls}>
       <div className="quick-edges">
+        <span className="quick-label">Edges</span>
         <span className={`quick-dot ${tailFree ? 'good' : 'bad'}`} title={tailFree ? 'Tail-free' : `Odd crossings on ${oddTypes.join(', ')}`} />
         {classes.map((c) => (
           <button
@@ -749,15 +762,47 @@ function QuickControls({ className: cls, ruleSet, classes, selection, onToggle, 
           </button>
         ))}
       </div>
+      <div className="quick-tiles">
+        {tiling.prototiles.map((q) => {
+          const n = counts[q.id];
+          const choices = n > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(n);
+          return (
+            <div className="quick-tile" key={q.id} title={q.name}>
+              <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={48} />
+              {n % 2 === 1 ? (
+                <div className="quick-tile-ctl bad">odd</div>
+              ) : choices > 1 ? (
+                <div className="quick-tile-ctl">
+                  <button type="button" onClick={() => onStepTile(q.id, -1)} aria-label={`Previous pairing for ${q.name}`}>
+                    ‹
+                  </button>
+                  <span>
+                    {((combo[q.id] ?? 0) % choices) + 1}/{choices}
+                  </span>
+                  <button type="button" onClick={() => onStepTile(q.id, 1)} aria-label={`Next pairing for ${q.name}`}>
+                    ›
+                  </button>
+                </div>
+              ) : (
+                <div className="quick-tile-ctl muted">{n === 0 ? 'none' : 'fixed'}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
       <div className="quick-combo">
-        <button type="button" onClick={() => onStep(-1)} disabled={total <= 1} aria-label="Previous combination">
+        <button type="button" onClick={() => onStep(-1)} disabled={total <= 1} aria-label="Previous pairing">
           ‹
         </button>
         <span className="quick-count">
-          {(index + 1).toLocaleString()}/{total.toLocaleString()}
+          Pairing
+          <br />
+          <b>
+            {(index + 1).toLocaleString()}/{total.toLocaleString()}
+          </b>
         </span>
         <button type="button" onClick={() => onStep(1)} disabled={total <= 1}>
-          Next ›
+          Next pairing ›
         </button>
         <button type="button" className="primary" onClick={onRandom} disabled={total <= 1}>
           Random
