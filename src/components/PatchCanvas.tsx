@@ -415,7 +415,8 @@ export function PatchCanvas(props: PatchCanvasProps) {
   useEffect(() => () => window.clearTimeout(settleTimer.current), []);
 
   // The chase: walk the line on at its pace, and ride the camera along it.
-  // Dragging takes the camera back until you let go; wheel zoom stays yours.
+  // Dragging takes the camera back until you let go (for good once the line
+  // has closed or hit a tail); wheel zoom stays yours.
   const dragging = useRef(false);
   const chaseOpts = useRef({ pace: props.chasePace ?? null, damping: props.chaseDamping ?? 1, onTick: props.onChaseTick });
   chaseOpts.current = { pace: props.chasePace ?? null, damping: props.chaseDamping ?? 1, onTick: props.onChaseTick };
@@ -431,7 +432,12 @@ export function PatchCanvas(props: PatchCanvasProps) {
       const dt = Math.min(100, now - last);
       last = now;
       raf = requestAnimationFrame(tick);
-      if (dragging.current) return;
+      if (dragging.current) {
+        // A finished line has nothing left to show: a drag takes the camera
+        // back for good, rather than until you let go.
+        if (chase.status !== 'running') cancelAnimationFrame(raf);
+        return;
+      }
       const v = view.current;
       const { w, h } = size.current;
       const viewMin = Math.min(w, h) / v.scale;

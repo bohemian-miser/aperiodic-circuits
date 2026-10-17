@@ -355,7 +355,7 @@ export function ExplorerPage({ route }: Props) {
                 </button>
               </div>
               <div className="checks">
-                <label title="Click a line and the camera chases it across the plane. Dragging takes the camera back until you let go; scroll-zoom stays yours.">
+                <label title="Click a line and the camera chases it across the plane. Dragging takes the camera back until you let go, and for good once the line has closed or hit a tail; scroll-zoom stays yours.">
                   <input type="checkbox" checked={chaseOn} onChange={(e) => setChaseOn(e.target.checked)} /> Chase the picked line
                 </label>
                 <label title="Walk the line as fast as the camera can follow">
