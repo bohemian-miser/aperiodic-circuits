@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import type { CircuitResult } from '../core/circuits';
+import type { Chord, CircuitResult } from '../core/circuits';
 import type { Pt } from '../core/geom';
 import { edgeSeamIndex, type RuleSet } from '../core/ruleset';
 import { instancePts, patchBounds, prototile, type TileInstance, type Tiling } from '../core/tiling';
-import { classColor, lengthHue, OPEN_COLOR, rainbow, TAIL_COLOR } from '../colors';
+import { classColor, lengthHue, mixColor, OPEN_COLOR, rainbow, TAIL_COLOR, toRgb, type Rgb } from '../colors';
 import type { StrandChase } from '../core/chase';
 import { advanceFollowCamera, createFollowCamera } from '../core/followCamera';
 import { halfAt, MORPH_MS, morphChords, morphProgress, prefersReducedMotion, type ChordMorph } from '../core/morph';
@@ -74,6 +74,34 @@ interface View {
   tx: number;
   ty: number;
 }
+
+/**
+ * A pairing change in progress, worked out in full before its first frame.
+ * The lines that stay put are drawn once with their old colours and once
+ * with their new ones; a frame cross-fades the two pictures and strokes only
+ * the halves on the move.
+ */
+interface MorphState {
+  /** When the first frame went up (the clock starts once everything is ready). */
+  start: number | null;
+  /** Its last frame (the finished picture) has been drawn. */
+  done: boolean;
+  readonly morph: ChordMorph;
+  /** The lines that stay put, by their old and by their new colour. */
+  readonly stillOld: Map<string, Path2D>;
+  readonly stillNew: Map<string, Path2D>;
+  /** Moving halves (indices into `morph.moving`) by old and new colour. */
+  readonly halves: Map<string, MorphHalves>;
+  base: {
+    readonly from: HTMLCanvasElement;
+    readonly to: HTMLCanvasElement;
+    readonly view: View;
+    /** The moving halves on screen in this view, by colour pair. */
+    readonly shown: readonly { readonly H: MorphHalves; readonly list: readonly number[] }[];
+  } | null;
+}
+
+type MorphHalves = { readonly from: Rgb; readonly to: Rgb; readonly fixed: string | null; readonly list: number[] };
 
 function cssVar(el: Element, name: string, fallback: string): string {
   return getComputedStyle(el).getPropertyValue(name).trim() || fallback;
@@ -174,10 +202,8 @@ export function PatchCanvas(props: PatchCanvasProps) {
     return { byColor, colors, chordColor };
   }, [circuits, rainbowLines]);
 
-  // A pairing change in progress: unchanged chords batched once, the moving
-  // halves rebuilt every frame.
-  const morph = useRef<{ start: number; still: Map<string, Path2D>; moving: ChordMorph; colors: string[] } | null>(null);
-  const morphFrom = useRef<{ circuits?: CircuitResult; key: unknown }>({ key: undefined });
+  const morph = useRef<MorphState | null>(null);
+  const morphFrom = useRef<{ circuits?: CircuitResult; colors?: readonly string[]; key: unknown }>({ key: undefined });
   const morphRaf = useRef(0);
 
   const selectedGeo = useMemo(() => {
@@ -286,71 +312,137 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const dpr = window.devicePixelRatio || 1;
     const { w, h } = size.current;
     const v = view.current;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = cssVar(canvas, '--canvas-bg', '#fbfaf7');
-    ctx.fillRect(0, 0, w * dpr, h * dpr);
-    ctx.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
     const px = 1 / v.scale;
     const dim = selectedGeo !== null || chase !== null;
-    if (showTiles) {
-      ctx.globalAlpha = dim ? 0.3 : 0.55;
-      for (const [color, p] of geo.fills) {
-        ctx.fillStyle = color;
-        ctx.fill(p);
+    const lw = chordWidth(v.scale, props.lineWidth);
+    // The tiles and edges, then set up to stroke chords.
+    const ground = (c: CanvasRenderingContext2D) => {
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.fillStyle = cssVar(canvas, '--canvas-bg', '#fbfaf7');
+      c.fillRect(0, 0, w * dpr, h * dpr);
+      c.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
+      if (showTiles) {
+        c.globalAlpha = dim ? 0.3 : 0.55;
+        for (const [color, p] of geo.fills) {
+          c.fillStyle = color;
+          c.fill(p);
+        }
+        c.globalAlpha = 1;
       }
-      ctx.globalAlpha = 1;
-    }
-    if (showOutlines && v.scale > 2) {
-      ctx.strokeStyle = cssVar(canvas, '--tile-edge', 'rgba(40,40,40,0.55)');
-      ctx.lineWidth = Math.min(1.2, v.scale / 12) * px;
-      ctx.stroke(geo.outline);
-      ctx.save();
-      ctx.globalAlpha = 0.35;
-      ctx.setLineDash([3 * px, 3 * px]);
-      ctx.stroke(geo.hidden);
-      ctx.restore();
-    }
-    if (classEdges) {
-      ctx.lineWidth = Math.max(1.5 * px, Math.min(0.12, 5 * px));
-      ctx.lineCap = 'round';
-      for (const [cls, p] of geo.byClass) {
-        if (classEdges !== 'all' && !classEdges.has(cls)) continue;
-        ctx.strokeStyle = classColor(cls);
-        ctx.stroke(p);
+      if (showOutlines && v.scale > 2) {
+        c.strokeStyle = cssVar(canvas, '--tile-edge', 'rgba(40,40,40,0.55)');
+        c.lineWidth = Math.min(1.2, v.scale / 12) * px;
+        c.stroke(geo.outline);
+        c.save();
+        c.globalAlpha = 0.35;
+        c.setLineDash([3 * px, 3 * px]);
+        c.stroke(geo.hidden);
+        c.restore();
       }
-    }
+      if (classEdges) {
+        c.lineWidth = Math.max(1.5 * px, Math.min(0.12, 5 * px));
+        c.lineCap = 'round';
+        for (const [cls, p] of geo.byClass) {
+          if (classEdges !== 'all' && !classEdges.has(cls)) continue;
+          c.strokeStyle = classColor(cls);
+          c.stroke(p);
+        }
+      }
+      c.lineWidth = lw;
+      c.lineCap = 'round';
+      c.lineJoin = 'round';
+      c.globalAlpha = dim ? 0.25 : 1;
+    };
+
     const M = morph.current;
-    const u = M ? morphProgress(M.start, performance.now()) : 1;
-    if (chordGeo) {
-      const lw = chordWidth(v.scale, props.lineWidth);
+    if (M && chordGeo) {
+      let B = M.base;
+      // The bases are drawn for one view: a pan or zoom mid-swing redraws them.
+      const fresh = !B || B.view.scale !== v.scale || B.view.tx !== v.tx || B.view.ty !== v.ty || B.from.width !== canvas.width || B.from.height !== canvas.height;
+      if (!B || fresh) {
+        const layer = () => {
+          const c = document.createElement('canvas');
+          c.width = canvas.width;
+          c.height = canvas.height;
+          return c;
+        };
+        const g = layer();
+        const gctx = g.getContext('2d');
+        if (gctx) ground(gctx);
+        const paint = (still: Map<string, Path2D>) => {
+          const c = layer();
+          const cx = c.getContext('2d');
+          if (!cx) return c;
+          cx.drawImage(g, 0, 0);
+          cx.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
+          cx.lineWidth = lw;
+          cx.lineCap = 'round';
+          cx.lineJoin = 'round';
+          cx.globalAlpha = dim ? 0.25 : 1;
+          for (const [color, p] of still) {
+            cx.strokeStyle = color;
+            cx.stroke(p);
+          }
+          return c;
+        };
+        const pad = lw * 2;
+        const x0 = -v.tx / v.scale - pad;
+        const y0 = -v.ty / v.scale - pad;
+        const x1 = (w - v.tx) / v.scale + pad;
+        const y1 = (h - v.ty) / v.scale + pad;
+        const on = (p: Pt) => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+        const shown = [...M.halves.values()].map((H) => ({
+          H,
+          // A half lies within its end and its two middles' hull, near enough.
+          list: H.list.filter((i) => {
+            const hf = M.morph.moving[i];
+            return on(hf.e) || on(hf.m0) || on(hf.m1);
+          }),
+        }));
+        B = M.base = { from: paint(M.stillOld), to: paint(M.stillNew), view: { ...v }, shown };
+      }
+      // The first frame of fresh bases can be slow to show (the browser
+      // renders them then), so the clock starts on the frame after it: the
+      // whole swing is seen, however long the setting up took.
+      const now = performance.now();
+      if (M.start === null && !fresh) M.start = now;
+      const u = M.start === null ? 0 : morphProgress(M.start, now);
+      if (M.start !== null && now - M.start >= MORPH_MS) M.done = true;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.drawImage(B.from, 0, 0);
+      ctx.globalAlpha = u;
+      ctx.drawImage(B.to, 0, 0);
+      ctx.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
       ctx.lineWidth = lw;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.globalAlpha = dim ? 0.25 : 1;
-      if (M && u < 1) {
-        const moving = new Map<string, Path2D>();
-        for (const h of M.moving.moving) {
-          const col = M.colors[h.chord];
-          let p = moving.get(col);
-          if (!p) moving.set(col, (p = new Path2D()));
-          const { e, q, m } = halfAt(h, u);
-          p.moveTo(e.x, e.y);
-          p.quadraticCurveTo(q.x, q.y, m.x, m.y);
+      for (const { H, list } of B.shown) {
+        if (list.length === 0) continue;
+        const path = new Path2D();
+        for (const i of list) {
+          const { e, q, m } = halfAt(M.morph.moving[i], u);
+          path.moveTo(e.x, e.y);
+          path.quadraticCurveTo(q.x, q.y, m.x, m.y);
         }
-        for (const paths of [M.still, moving]) {
-          for (const [color, p] of paths) {
-            ctx.strokeStyle = color;
-            ctx.stroke(p);
-          }
-        }
-      } else {
-        for (const [color, p] of chordGeo.byColor) {
-          ctx.strokeStyle = color;
-          ctx.stroke(p);
-        }
+        ctx.strokeStyle = H.fixed ?? mixColor(H.from, H.to, u);
+        ctx.stroke(path);
       }
       ctx.globalAlpha = 1;
-      if (selectedGeo && !(M && u < 1)) {
+      drawTrail(ctx, canvas);
+      reportView();
+      return;
+    }
+
+    ground(ctx);
+    if (chordGeo) {
+      for (const [color, p] of chordGeo.byColor) {
+        ctx.strokeStyle = color;
+        ctx.stroke(p);
+      }
+      ctx.globalAlpha = 1;
+      if (selectedGeo) {
         ctx.strokeStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
         ctx.lineWidth = lw * 3.2;
         ctx.stroke(selectedGeo.all);
@@ -366,6 +458,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
         }
       }
     }
+    ctx.globalAlpha = 1;
     const snap = snapshot.current?.canvas ?? document.createElement('canvas');
     if (snap.width !== canvas.width || snap.height !== canvas.height) {
       snap.width = canvas.width;
@@ -425,7 +518,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const snap = snapshot.current;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
-    if (!quick.current || !snap || !canvas || !ctx || snap.canvas.width !== canvas.width || snap.canvas.height !== canvas.height) {
+    if (!quick.current || morph.current || !snap || !canvas || !ctx || snap.canvas.width !== canvas.width || snap.canvas.height !== canvas.height) {
       drawRef.current();
       return;
     }
@@ -548,10 +641,17 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const ro = new ResizeObserver(() => {
       const r = wrap.getBoundingClientRect();
       const first = size.current.w <= 1;
-      size.current = { w: Math.max(1, r.width), h: Math.max(1, r.height) };
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.round(size.current.w * dpr);
-      canvas.height = Math.round(size.current.h * dpr);
+      const w = Math.max(1, r.width);
+      const h = Math.max(1, r.height);
+      // A new observer reports the size straight away, and it is re-made
+      // whenever the drawing changes: setting a canvas's size wipes it, so
+      // only touch it when it really changed, or the canvas blanks until the
+      // next full draw.
+      if (!first && w === size.current.w && h === size.current.h && canvas.width === Math.round(w * dpr) && canvas.height === Math.round(h * dpr)) return;
+      size.current = { w, h };
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
       canvas.style.width = `${size.current.w}px`;
       canvas.style.height = `${size.current.h}px`;
       if (first) fit();
@@ -576,31 +676,51 @@ export function PatchCanvas(props: PatchCanvasProps) {
   // effect, so the first frame drawn for the new lines is already the morph.
   useLayoutEffect(() => {
     const prev = morphFrom.current;
-    morphFrom.current = { circuits, key: props.morphKey };
+    morphFrom.current = { circuits, colors: chordGeo?.chordColor, key: props.morphKey };
     cancelAnimationFrame(morphRaf.current);
     morph.current = null;
-    if (!circuits || !chordGeo || !prev.circuits || prev.circuits === circuits || prev.key !== props.morphKey || props.morphKey === undefined || prefersReducedMotion()) return;
+    if (!circuits || !chordGeo || !prev.circuits || !prev.colors || prev.circuits === circuits || prev.key !== props.morphKey || props.morphKey === undefined || prefersReducedMotion()) return;
     const m = morphChords(prev.circuits.chords, circuits.chords, (ch) => ch.inst);
     if (!m || m.moving.length === 0) return;
-    const still = new Map<string, Path2D>();
-    for (const i of m.still) {
-      const ch = circuits.chords[i];
-      const col = chordGeo.chordColor[i];
-      let p = still.get(col);
-      if (!p) still.set(col, (p = new Path2D()));
+    // Every colour change worked out up front: each line fades from its old
+    // colour to its new one as it swings.
+    const oldColor = prev.colors;
+    const newColor = chordGeo.chordColor;
+    const stillOld = new Map<string, Path2D>();
+    const stillNew = new Map<string, Path2D>();
+    const add = (by: Map<string, Path2D>, col: string, ch: Chord) => {
+      let p = by.get(col);
+      if (!p) by.set(col, (p = new Path2D()));
       p.moveTo(ch.a.x, ch.a.y);
       p.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
-    }
-    const start = performance.now();
-    morph.current = { start, still, moving: m, colors: chordGeo.chordColor };
+    };
+    m.still.forEach((i, k) => {
+      add(stillOld, oldColor[m.stillFrom[k]] ?? newColor[i], circuits.chords[i]);
+      add(stillNew, newColor[i], circuits.chords[i]);
+    });
+    const halves: MorphState['halves'] = new Map();
+    m.moving.forEach((hf, i) => {
+      const a = oldColor[hf.from] ?? newColor[hf.chord];
+      const b = newColor[hf.chord];
+      const k = `${a}|${b}`;
+      let H = halves.get(k);
+      if (!H) halves.set(k, (H = { from: toRgb(a), to: toRgb(b), fixed: a === b ? a : null, list: [] }));
+      H.list.push(i);
+    });
+    const M: MorphState = { start: null, done: false, morph: m, stillOld, stillNew, halves, base: null };
+    morph.current = M;
     const tick = () => {
-      scheduleRef.current();
-      if (performance.now() - start < MORPH_MS) morphRaf.current = requestAnimationFrame(tick);
-      else {
+      if (morph.current !== M) return;
+      if (M.done) {
+        // The last frame showed the finished picture: hand back to the full draw.
         morph.current = null;
         scheduleRef.current();
+        return;
       }
+      scheduleRef.current();
+      morphRaf.current = requestAnimationFrame(tick);
     };
+    scheduleRef.current();
     morphRaf.current = requestAnimationFrame(tick);
   }, [circuits, chordGeo]);
   useEffect(() => () => cancelAnimationFrame(morphRaf.current), []);
