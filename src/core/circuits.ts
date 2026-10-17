@@ -44,10 +44,10 @@ export interface CircuitResult {
   /** Tile types that ended up with an odd number of crossings. */
   readonly oddTypes: readonly string[];
   /**
-   * The lines were followed. False from {@link layChords}: the chords are all
-   * there, but there are no paths and every count is 0.
+   * The chords were laid but not followed ({@link layChords}): no paths, every
+   * `pathOfChord` is -1 and the counts are all 0.
    */
-  readonly traced: boolean;
+  readonly untraced?: true;
 }
 
 /** Local chords per type for a selection and combination. */
@@ -87,6 +87,26 @@ export interface CircuitInput {
   /** Non-crossing matching index per type. */
   readonly combo: Readonly<Record<string, number>>;
   readonly adjacency?: Adjacency;
+}
+
+/**
+ * Just lay the chords, without matching tiles up or following the lines: the
+ * picture of the lines, at a fraction of the cost. What infinite mode shows
+ * once the view holds too many tiles to trace (as on the Spectre map, which
+ * draws the lines at any zoom but colours circuits only up to a ceiling).
+ */
+export function layChords(input: CircuitInput): CircuitResult {
+  const { tiling: t, ruleSet: rs, instances, selection } = input;
+  const local = new Map<string, ReturnType<typeof localChords>>();
+  for (const p of t.prototiles) local.set(p.id, localChords(t, rs, p.id, selection, input.combo[p.id] ?? 0));
+  const chords: Chord[] = [];
+  for (const inst of instances) {
+    for (const ch of local.get(inst.type)!.chords) {
+      chords.push({ inst: inst.id, a: transPt(inst.xform, ch.a), b: transPt(inst.xform, ch.b), c: transPt(inst.xform, ch.c) });
+    }
+  }
+  const oddTypes = t.prototiles.filter((p) => local.get(p.id)!.odd).map((p) => p.id);
+  return { chords, paths: [], pathOfChord: new Int32Array(chords.length).fill(-1), circuits: 0, openLines: 0, tails: 0, circuitLengths: new Map(), oddTypes, untraced: true };
 }
 
 export function computeCircuits(input: CircuitInput): CircuitResult {
@@ -211,24 +231,6 @@ export function computeCircuits(input: CircuitInput): CircuitResult {
     else openLines++;
   }
   const oddTypes = t.prototiles.filter((p) => local.get(p.id)!.odd).map((p) => p.id);
-  return { chords, paths, pathOfChord, circuits, openLines, tails, circuitLengths, oddTypes, traced: true };
+  return { chords, paths, pathOfChord, circuits, openLines, tails, circuitLengths, oddTypes };
 }
 
-/**
- * Just the chords, untraced: what a patch too big to trace (infinite mode,
- * zoomed well out) still draws. No adjacency is needed, so it costs a
- * fraction of {@link computeCircuits}.
- */
-export function layChords(input: Omit<CircuitInput, 'adjacency'>): CircuitResult {
-  const { tiling: t, ruleSet: rs, instances, selection } = input;
-  const local = new Map<string, ReturnType<typeof localChords>>();
-  for (const p of t.prototiles) local.set(p.id, localChords(t, rs, p.id, selection, input.combo[p.id] ?? 0));
-  const chords: Chord[] = [];
-  for (const inst of instances) {
-    for (const ch of local.get(inst.type)!.chords) {
-      chords.push({ inst: inst.id, a: transPt(inst.xform, ch.a), b: transPt(inst.xform, ch.b), c: transPt(inst.xform, ch.c) });
-    }
-  }
-  const oddTypes = t.prototiles.filter((p) => local.get(p.id)!.odd).map((p) => p.id);
-  return { chords, paths: [], pathOfChord: new Int32Array(chords.length).fill(-1), circuits: 0, openLines: 0, tails: 0, circuitLengths: new Map(), oddTypes, traced: false };
-}
