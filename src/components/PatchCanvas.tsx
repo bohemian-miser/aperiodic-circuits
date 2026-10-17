@@ -85,6 +85,16 @@ export function pathColors(r: CircuitResult): string[] {
   return r.paths.map((p) => (p.closed ? lengthHue(rank.get(p.chords.length) ?? 0) : p.ends.includes('tail') ? TAIL_COLOR : OPEN_COLOR));
 }
 
+/**
+ * The colour of a circuit of length `len`: the patch's colour for that length,
+ * or, for a length not on the patch, the one it would get if it were.
+ */
+function circuitColor(r: CircuitResult | null | undefined, len: number): string {
+  let rank = 0;
+  for (const l of r?.circuitLengths.keys() ?? []) if (l < len) rank++;
+  return lengthHue(rank);
+}
+
 /** Chord line width in world units at this zoom. */
 function chordWidth(scale: number, lineWidth = 1): number {
   const px = 1 / scale;
@@ -225,15 +235,19 @@ export function PatchCanvas(props: PatchCanvasProps) {
     ctx.lineWidth = lw * 3.2;
     for (const C of shown) ctx.stroke(C.all);
     ctx.lineWidth = lw * 1.8;
+    // A closed circuit takes one solid colour by its length, as on the patch.
+    if (chase.status === 'closed') {
+      ctx.strokeStyle = circuitColor(circuits, chase.steps);
+      for (const C of shown) ctx.stroke(C.all);
+      // Its head is back at the start: a marker there would read as a gap in the loop.
+      return;
+    }
     for (const C of shown) {
       for (const [col, b] of C.buckets) {
         ctx.strokeStyle = col;
         ctx.stroke(b);
       }
     }
-    // A closed circuit's head is back at the start: a marker there would
-    // read as a gap in the loop.
-    if (chase.status === 'closed') return;
     const hd = chase.headPt;
     ctx.beginPath();
     ctx.arc(hd.x, hd.y, Math.max(lw * 2.4, 4 / v.scale), 0, 2 * Math.PI);
