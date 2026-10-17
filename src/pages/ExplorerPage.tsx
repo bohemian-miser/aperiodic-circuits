@@ -10,6 +10,7 @@ import { qkey } from '../core/polygon';
 import { StrandChase, type ChaseStatus } from '../core/chase';
 import type { Tiling } from '../core/tiling';
 import { PatchCanvas, pathColors } from '../components/PatchCanvas';
+import { TileEditor } from '../components/TileEditor';
 import { TileGlyph } from '../components/TileGlyph';
 import { classColor } from '../colors';
 import { hashFor, replaceHash, type Route } from '../route';
@@ -90,6 +91,9 @@ export function ExplorerPage({ route }: Props) {
   // The tile pictures in the quick controls: 0 big, 1 small, 2 hidden.
   const [tileSize, setTileSize] = useStoredNumber('quick-tiles', 0, (n) => n === 0 || n === 1 || n === 2);
   const [statsOpen, setStatsOpen] = useStoredFlag('stats-open', false);
+  const [basisOpen, setBasisOpen] = useStoredFlag('quick-basis', false);
+  // The tile magnified for drawing its pairing.
+  const [editing, setEditing] = useState<string | null>(null);
   const [showBackground, setShowBackground] = useStoredFlag('background', true);
   const [showTiles, setShowTiles] = useStoredFlag('tile-colours', true);
   const [rainbowLines, setRainbowLines] = useStoredFlag('rainbow-lines', true);
@@ -139,6 +143,7 @@ export function ExplorerPage({ route }: Props) {
     [tiling, ruleSet, instances, selection, combo, adjacency],
   );
   useEffect(() => setPickedAt(null), [tiling, ruleSet, root, seed, infinite]);
+  useEffect(() => setEditing(null), [tiling, ruleSet]);
   // A chase belongs to one plane and one set of lines.
   useEffect(() => setChase(null), [plane, ruleSet, selection, combo, chaseOn]);
   useEffect(() => {
@@ -268,6 +273,12 @@ export function ExplorerPage({ route }: Props) {
       onStepTile={stepCombo}
       tileSize={tileSize}
       onTileSize={setTileSize}
+      onOpenTile={setEditing}
+      basis={parity.basis}
+      basisCoords={coords}
+      onToggleGroup={toggleGroup}
+      basisOpen={basisOpen}
+      onBasisOpen={setBasisOpen}
       index={comboIndex}
       total={totalCombos}
       onRandom={randomCombo}
@@ -630,6 +641,18 @@ export function ExplorerPage({ route }: Props) {
 
       <main className={`stage ui-${ui}`}>
         {ui !== 'c' && quick}
+        {editing && (
+          <TileEditor
+            key={editing}
+            tiling={tiling}
+            ruleSet={ruleSet}
+            selection={selection}
+            type={editing}
+            index={combo[editing] ?? 0}
+            onSetIndex={(i) => setCombo({ ...combo, [editing]: i })}
+            onClose={() => setEditing(null)}
+          />
+        )}
         <PatchCanvas
           tiling={tiling}
           instances={instances}
@@ -748,6 +771,12 @@ interface QuickProps {
   readonly onStepTile: (type: string, d: number) => void;
   readonly tileSize: number;
   readonly onTileSize: (n: number) => void;
+  readonly onOpenTile: (type: string) => void;
+  readonly basis: readonly (readonly number[])[];
+  readonly basisCoords: readonly boolean[] | null;
+  readonly onToggleGroup: (g: readonly number[]) => void;
+  readonly basisOpen: boolean;
+  readonly onBasisOpen: (open: boolean) => void;
   readonly index: number;
   readonly total: number;
   readonly onRandom: () => void;
@@ -759,7 +788,8 @@ interface QuickProps {
  * of the picked edges, kept by the field so you can watch it change.
  */
 function QuickControls(props: QuickProps) {
-  const { className: cls, tiling, ruleSet, classes, selection, onToggle, tailFree, oddTypes, counts, combo, onStepTile, tileSize, onTileSize, index, total, onRandom, onStep } = props;
+  const { className: cls, tiling, ruleSet, classes, selection, onToggle, tailFree, oddTypes, counts, combo, onStepTile, tileSize, onTileSize, onOpenTile, index, total, onRandom, onStep } = props;
+  const { basis, basisCoords, onToggleGroup, basisOpen, onBasisOpen } = props;
   return (
     <div className={cls}>
       <div className="quick-edges">
@@ -777,6 +807,17 @@ function QuickControls(props: QuickProps) {
             {className(ruleSet, c)}
           </button>
         ))}
+        {basis.length > 0 && (
+          <button
+            type="button"
+            className={`quick-toggle${basisOpen ? ' on' : ''}`}
+            onClick={() => onBasisOpen(!basisOpen)}
+            aria-expanded={basisOpen}
+            title="Basis groups: flip a group's edges together and stay tail-free"
+          >
+            groups {basisOpen ? '▴' : '▾'}
+          </button>
+        )}
         <button
           type="button"
           className="quick-size"
@@ -788,27 +829,45 @@ function QuickControls(props: QuickProps) {
           <span className="short">⬡{['L', 'S', '–'][tileSize]}</span>
         </button>
       </div>
+      {basisOpen && basis.length > 0 && (
+        <div className="quick-basis">
+          {basis.map((g, i) => {
+            const label = g.map((c) => className(ruleSet, c)).join(ruleSet.classNames ? ',' : '·');
+            const on = basisCoords?.[i] ?? false;
+            return (
+              <button type="button" key={label} className={`chip plain${on ? ' on' : ''}`} onClick={() => onToggleGroup(g)} aria-pressed={on}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {tileSize < 2 && (
         <div className={`quick-tiles${tileSize === 1 ? ' small' : ''}`}>
           {tiling.prototiles.map((q) => {
             const n = counts[q.id];
             const choices = n > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(n);
-            const glyph = <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={tileSize === 1 ? 30 : 48} />;
-            // Tiles keep their places; the ones with a choice stand out and step when tapped.
-            if (n % 2 === 0 && choices > 1) {
-              return (
-                <button type="button" className="quick-tile varies" key={q.id} title={`${q.name}: tap for its next pairing`} onClick={() => onStepTile(q.id, 1)}>
-                  {glyph}
-                  <span className="quick-tile-ctl">
-                    {((combo[q.id] ?? 0) % choices) + 1}/{choices}
-                  </span>
-                </button>
-              );
-            }
-            return (
-              <div className={`quick-tile ${n % 2 === 1 ? 'odd' : 'fixed'}`} key={q.id} title={n % 2 === 1 ? `${q.name}: odd crossings` : `${q.name}: one way`}>
-                {glyph}
-                <span className="quick-tile-ctl">{n % 2 === 1 ? 'odd' : '\u00a0'}</span>
+            const varies = n % 2 === 0 && choices > 1;
+            const kind = n % 2 === 1 ? 'odd' : n === 0 ? 'empty' : varies ? 'varies' : '';
+            // Big tiles open in the pairing editor; small ones just step their pairing.
+            const open = tileSize === 0 ? n > 0 : varies;
+            const onClick = () => (tileSize === 0 ? onOpenTile(q.id) : onStepTile(q.id, 1));
+            const body = (
+              <>
+                <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={tileSize === 1 ? 34 : 56} />
+                <span className="quick-tile-name">{q.name}</span>
+                {(varies || n % 2 === 1) && (
+                  <span className="quick-tile-ctl">{n % 2 === 1 ? 'odd' : `${((combo[q.id] ?? 0) % choices) + 1}/${choices}`}</span>
+                )}
+              </>
+            );
+            return open ? (
+              <button type="button" className={`quick-tile ${kind}`} key={q.id} title={tileSize === 0 ? `${q.name}: tap to draw its pairing` : `${q.name}: tap for its next pairing`} onClick={onClick}>
+                {body}
+              </button>
+            ) : (
+              <div className={`quick-tile ${kind}`} key={q.id} title={n === 0 ? `${q.name}: no lines` : q.name}>
+                {body}
               </div>
             );
           })}

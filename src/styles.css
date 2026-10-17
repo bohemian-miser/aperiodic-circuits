@@ -1001,17 +1001,18 @@ h3.sub {
 .quick {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 12px;
+  gap: 4px;
+  padding: 5px 8px;
   background: var(--panel);
   z-index: 2;
 }
 
-.quick-edges {
+.quick-edges,
+.quick-basis {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .quick-label {
@@ -1024,8 +1025,13 @@ h3.sub {
 }
 
 .quick-edges .chip {
-  min-width: 30px;
-  padding: 2px 8px;
+  min-width: 28px;
+  padding: 1px 7px;
+}
+
+.quick-basis .chip {
+  padding: 1px 7px;
+  font-size: 12px;
 }
 
 .quick-dot {
@@ -1043,83 +1049,116 @@ h3.sub {
   background: var(--danger);
 }
 
-.quick-tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
-  gap: 5px;
+.quick-toggle,
+.quick-size {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
-.quick-tiles.small {
-  grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
-  gap: 3px;
+/* The first button after the edge chips pushes the toggles to the right. */
+.quick-edges .chip + :not(.chip) {
+  margin-left: auto;
 }
 
-.quick-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
-  font: inherit;
-  color: inherit;
-}
-
-.quick-tile.fixed {
-  opacity: 0.4;
-}
-
-.quick-tile.varies {
-  border: 2px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
-  cursor: pointer;
-}
-
-.quick-tile.odd {
-  border-color: var(--danger);
-}
-
-.quick-tile-ctl {
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.quick-tile.odd .quick-tile-ctl {
-  color: var(--danger);
-}
-
-.quick-tiles.small .quick-tile {
-  padding: 1px;
-}
-
-.quick-tiles.small .quick-tile-ctl {
-  font-size: 9.5px;
-  line-height: 12px;
+.quick-toggle.on {
+  color: var(--panel);
 }
 
 .quick-size .short {
   display: none;
 }
 
-.quick-size {
-  margin-left: auto;
-  flex-shrink: 0;
-  padding: 2px 8px;
-  font-size: 12px;
-  color: var(--muted);
+.quick-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+  gap: 2px;
+}
+
+.quick-tiles.small {
+  grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+}
+
+.quick-tile {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  font: inherit;
+  color: inherit;
+}
+
+button.quick-tile {
+  cursor: pointer;
+}
+
+.quick-tile.empty {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+.quick-tile.varies {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+}
+
+.quick-tile.odd {
+  border-color: var(--danger);
+}
+
+.quick-tile-name {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.quick-tile-ctl {
+  position: absolute;
+  bottom: 0;
+  right: 2px;
+  font-size: 9.5px;
+  line-height: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.quick-tile.odd .quick-tile-ctl {
+  color: var(--danger);
+}
+
+.quick-tiles.small .quick-tile-name {
+  font-size: 8px;
+}
+
+.quick-tiles.small .quick-tile-ctl {
+  font-size: 8.5px;
+  line-height: 10px;
+  right: 1px;
 }
 
 .quick-combo {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .quick-combo button {
   flex: 1;
+  padding-top: 5px;
+  padding-bottom: 5px;
 }
 
 .quick-combo button[aria-label] {
@@ -1129,10 +1168,10 @@ h3.sub {
 }
 
 .quick-count {
-  min-width: 52px;
+  min-width: 48px;
   text-align: center;
-  font-size: 11px;
-  line-height: 1.2;
+  font-size: 10.5px;
+  line-height: 1.15;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -1140,6 +1179,77 @@ h3.sub {
 .quick-count b {
   font-size: 13px;
   color: var(--ink);
+}
+
+/* The magnified tile you draw a pairing on. */
+.tile-editor-pop {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: min(300px, calc(100vw - 24px));
+  padding: 6px 10px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  z-index: 10;
+}
+
+.tile-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tile-editor-step {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-editor-step button {
+  padding: 0 8px;
+}
+
+.tile-editor-close {
+  margin-left: auto;
+  padding: 0 9px;
+  font-size: 18px;
+  line-height: 26px;
+}
+
+/* Hexagons are wider than tall: crop the square glyph's empty top and bottom. */
+.tile-editor-stage {
+  position: relative;
+  width: 260px;
+  height: 230px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.tile-editor-stage > svg {
+  position: absolute;
+  top: -15px;
+  left: 0;
+  width: 260px;
+  height: 260px;
+}
+
+.tile-editor-touch {
+  touch-action: none;
+}
+
+.tile-editor-hit {
+  cursor: crosshair;
+}
+
+.tile-editor-hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
 }
 
 /* a: a panel above the field. */
