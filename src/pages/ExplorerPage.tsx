@@ -75,6 +75,8 @@ export function ExplorerPage({ route }: Props) {
   // The picked line is remembered by a point on it, so it survives the patch
   // being regrown (infinite mode regrows on every pan).
   const [pickedAt, setPickedAt] = useState<readonly string[] | null>(null);
+  // Which layout of the quick controls to show (a: strip above the field, b: floating on it, c: dock below it).
+  const [ui] = useState(() => (['a', 'b', 'c'].includes(p.get('ui') ?? '') ? p.get('ui')! : 'a'));
   const [infiniteOn, setInfiniteOn] = useState(() => p.get('inf') === '1');
   const [seed, setSeed] = useState(() => Math.max(1, Number(p.get('seed')) || 1));
   const [viewRect, setViewRect] = useState<Rect>(INITIAL_VIEW);
@@ -194,10 +196,10 @@ export function ExplorerPage({ route }: Props) {
 
   // Keep the URL in step (without spamming history).
   useEffect(() => {
-    const params: Record<string, string | number | undefined> = { t: tiling.id, rs: ruleSet.id, lv: level, root, s: share, inf: infinite ? 1 : undefined, seed: infinite && seed !== 1 ? seed : undefined };
+    const params: Record<string, string | number | undefined> = { t: tiling.id, rs: ruleSet.id, lv: level, root, s: share, inf: infinite ? 1 : undefined, seed: infinite && seed !== 1 ? seed : undefined, ui: ui !== 'a' ? ui : undefined };
     if (embedded && embedded.id === ruleSet.id) params.rsd = p.get('rsd') ?? undefined;
     replaceHash(hashFor('explore', params));
-  }, [tiling.id, ruleSet.id, level, root, share, embedded, p, infinite, seed]);
+  }, [tiling.id, ruleSet.id, level, root, share, embedded, p, infinite, seed, ui]);
 
   const toggleClass = (c: number) => {
     const next = new Set(selection);
@@ -229,6 +231,40 @@ export function ExplorerPage({ route }: Props) {
     setCombo(next);
   };
   const totalCombos = types.reduce((acc, t) => acc * Math.max(1, counts[t] > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(counts[t])), 1);
+  // Combinations in order, as one mixed-radix number: the first type with a
+  // choice is the lowest digit, the same order the survey runs them in.
+  const choiceTypes = types.filter((t) => counts[t] <= MAX_ENUMERATED_CROSSINGS && choiceCount(counts[t]) > 1);
+  let comboIndex = 0;
+  for (let i = choiceTypes.length - 1; i >= 0; i--) {
+    const c = choiceCount(counts[choiceTypes[i]]);
+    comboIndex = comboIndex * c + ((combo[choiceTypes[i]] ?? 0) % c);
+  }
+  const stepAll = (d: number) => {
+    if (totalCombos <= 1) return;
+    let k = (((comboIndex + d) % totalCombos) + totalCombos) % totalCombos;
+    const next: Record<string, number> = {};
+    for (const t of choiceTypes) {
+      const c = choiceCount(counts[t]);
+      next[t] = k % c;
+      k = Math.floor(k / c);
+    }
+    setCombo(next);
+  };
+  const quick = (
+    <QuickControls
+      className={`quick quick-${ui}`}
+      ruleSet={ruleSet}
+      classes={classes}
+      selection={selection}
+      onToggle={toggleClass}
+      tailFree={isTailFree}
+      oddTypes={circuits.oddTypes}
+      index={comboIndex}
+      total={totalCombos}
+      onRandom={randomCombo}
+      onStep={stepAll}
+    />
+  );
 
   const [shareDraft, setShareDraft] = useState<string | null>(null);
   const applyShare = (s: string) => {
@@ -557,6 +593,9 @@ export function ExplorerPage({ route }: Props) {
             <button type="button" onClick={randomCombo}>
               Random
             </button>
+            <button type="button" onClick={() => stepAll(1)} disabled={totalCombos <= 1}>
+              Next
+            </button>
             <button type="button" onClick={() => setCombo({})}>
               Reset
             </button>
@@ -580,7 +619,8 @@ export function ExplorerPage({ route }: Props) {
         <Survey tiling={tiling} ruleSet={ruleSet} selection={selection} counts={counts} onPick={setCombo} />
       </aside>
 
-      <main className="stage">
+      <main className={`stage ui-${ui}`}>
+        {ui !== 'c' && quick}
         <PatchCanvas
           tiling={tiling}
           instances={instances}
@@ -603,6 +643,7 @@ export function ExplorerPage({ route }: Props) {
           zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
           selectedRainbow={infinite}
         />
+        {ui === 'c' && quick}
         <div className="stats">
           <span>
             <b>{circuits.circuits.toLocaleString()}</b> circuits
@@ -673,6 +714,57 @@ function area(r: Rect): number {
 function describeChase(c: { steps: number; status: ChaseStatus }): string {
   const n = c.steps.toLocaleString();
   return c.status === 'closed' ? `Chased a closed circuit: ${n} tiles round` : c.status === 'tail' ? `Chase ended in a tail after ${n} tiles` : `Chasing… ${n} tiles`;
+}
+
+interface QuickProps {
+  readonly className: string;
+  readonly ruleSet: RuleSet;
+  readonly classes: readonly number[];
+  readonly selection: ReadonlySet<number>;
+  readonly onToggle: (c: number) => void;
+  readonly tailFree: boolean;
+  readonly oddTypes: readonly string[];
+  readonly index: number;
+  readonly total: number;
+  readonly onRandom: () => void;
+  readonly onStep: (d: number) => void;
+}
+
+/** The edge picker and combination stepper, kept next to the field so you can watch it change. */
+function QuickControls({ className: cls, ruleSet, classes, selection, onToggle, tailFree, oddTypes, index, total, onRandom, onStep }: QuickProps) {
+  return (
+    <div className={cls}>
+      <div className="quick-edges">
+        <span className={`quick-dot ${tailFree ? 'good' : 'bad'}`} title={tailFree ? 'Tail-free' : `Odd crossings on ${oddTypes.join(', ')}`} />
+        {classes.map((c) => (
+          <button
+            type="button"
+            key={c}
+            className={`chip${selection.has(c) ? ' on' : ''}`}
+            style={{ ['--chip' as string]: classColor(c) }}
+            onClick={() => onToggle(c)}
+            aria-pressed={selection.has(c)}
+          >
+            {className(ruleSet, c)}
+          </button>
+        ))}
+      </div>
+      <div className="quick-combo">
+        <button type="button" onClick={() => onStep(-1)} disabled={total <= 1} aria-label="Previous combination">
+          ‹
+        </button>
+        <span className="quick-count">
+          {(index + 1).toLocaleString()}/{total.toLocaleString()}
+        </span>
+        <button type="button" onClick={() => onStep(1)} disabled={total <= 1}>
+          Next ›
+        </button>
+        <button type="button" className="primary" onClick={onRandom} disabled={total <= 1}>
+          Random
+        </button>
+      </div>
+    </div>
+  );
 }
 
 interface SurveyProps {
