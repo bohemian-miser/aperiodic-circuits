@@ -10,7 +10,7 @@
  */
 
 import { dist, lerpPt, transPt, type Pt } from './geom';
-import { qkey } from './polygon';
+import { pointKeyer, qkey } from './polygon';
 import { prototile, type TileInstance, type Tiling } from './tiling';
 
 export interface Seam {
@@ -156,26 +156,75 @@ export function edgeKey(a: Pt, b: Pt): string {
 }
 
 export function computeAdjacency(t: Tiling, instances: readonly TileInstance[]): Adjacency {
-  const byKey = new Map<string, EdgeRef[]>();
+  // Edges are bucketed by their midpoint (a numeric key, buckets chained
+  // through `next`), then matched by their ends within a bucket, which is the
+  // same as keying on both ends.
+  const o = instances.length ? transPt(instances[0].xform, prototile(t, instances[0].type).pts[0]) : { x: 0, y: 0 };
+  const key = pointKeyer(o);
+  let total = 0;
+  for (const inst of instances) total += prototile(t, inst.type).pts.length;
+  // Per edge (flat): its tile, its index, its two end keys, the next edge in its bucket.
+  const eInst = new Int32Array(total);
+  const eEdge = new Int32Array(total);
+  const eA: (number | string)[] = new Array(total);
+  const eB: (number | string)[] = new Array(total);
+  const next = new Int32Array(total).fill(-1);
+  const head = new Map<number | string, number>();
   const neighbour: (EdgeRef | null)[][] = [];
+  let id = 0;
   for (const inst of instances) {
-    const pts = prototile(t, inst.type).pts.map((p) => transPt(inst.xform, p));
-    const row: (EdgeRef | null)[] = [];
-    for (let e = 0; e < pts.length; e++) {
-      const k = edgeKey(pts[e], pts[(e + 1) % pts.length]);
-      let list = byKey.get(k);
-      if (!list) byKey.set(k, (list = []));
-      list.push({ inst: inst.id, edge: e });
-      row.push(null);
+    const pts = prototile(t, inst.type).pts;
+    const M = inst.xform;
+    const n = pts.length;
+    const x0 = M[0] * pts[0].x + M[1] * pts[0].y + M[2];
+    const y0 = M[3] * pts[0].x + M[4] * pts[0].y + M[5];
+    const k0 = key(x0, y0);
+    let xa = x0;
+    let ya = y0;
+    let ka = k0;
+    for (let e = 0; e < n; e++) {
+      const last = e + 1 === n;
+      const xb = last ? x0 : M[0] * pts[e + 1].x + M[1] * pts[e + 1].y + M[2];
+      const yb = last ? y0 : M[3] * pts[e + 1].x + M[4] * pts[e + 1].y + M[5];
+      const kb = last ? k0 : key(xb, yb);
+      const k = key((xa + xb) / 2, (ya + yb) / 2);
+      eInst[id] = inst.id;
+      eEdge[id] = e;
+      eA[id] = ka;
+      eB[id] = kb;
+      const h = head.get(k);
+      if (h !== undefined) next[id] = h;
+      head.set(k, id);
+      id++;
+      xa = xb;
+      ya = yb;
+      ka = kb;
     }
-    neighbour[inst.id] = row;
+    neighbour[inst.id] = new Array(n).fill(null);
   }
   let anomalies = 0;
-  for (const list of byKey.values()) {
-    if (list.length === 2) {
-      neighbour[list[0].inst][list[0].edge] = list[1];
-      neighbour[list[1].inst][list[1].edge] = list[0];
-    } else if (list.length > 2) anomalies++;
+  const glue = (i: number, j: number) => {
+    neighbour[eInst[i]][eEdge[i]] = { inst: eInst[j], edge: eEdge[j] };
+    neighbour[eInst[j]][eEdge[j]] = { inst: eInst[i], edge: eEdge[i] };
+  };
+  const same = (i: number, j: number) => (eA[i] === eA[j] && eB[i] === eB[j]) || (eA[i] === eB[j] && eB[i] === eA[j]);
+  for (const h of head.values()) {
+    const j = next[h];
+    if (j < 0) continue;
+    if (next[j] < 0) {
+      if (same(h, j)) glue(h, j);
+      continue;
+    }
+    // Rare: three or more edges on one midpoint. Group them by their ends.
+    const left: number[] = [];
+    for (let i = h; i >= 0; i = next[i]) left.push(i);
+    while (left.length) {
+      const i = left.shift()!;
+      const group = [i];
+      for (let k = left.length - 1; k >= 0; k--) if (same(i, left[k])) group.push(...left.splice(k, 1));
+      if (group.length === 2) glue(group[0], group[1]);
+      else if (group.length > 2) anomalies++;
+    }
   }
   return { instances, neighbour, anomalies };
 }

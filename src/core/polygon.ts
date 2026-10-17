@@ -36,6 +36,27 @@ export function qkey(p: Pt, q = 1e4): string {
   return `${Math.round(p.x * q)},${Math.round(p.y * q)}`;
 }
 
+/** Grid cells per axis a numeric point key holds before it falls back to a string. */
+const NUM_SPAN = 2 ** 26;
+
+/**
+ * The same quantising as {@link qkey}, measured from `origin`, as a number
+ * when it fits (it does for any patch within ~30,000 units of its origin at
+ * q = 1e3). Map lookups on numbers are several times faster than on strings,
+ * which matters on a patch of 100,000 tiles. Keys from different keyers don't
+ * mix.
+ */
+export function pointKeyer(origin: Pt, q = 1e3): (x: number, y: number) => number | string {
+  const ox = Math.round(origin.x);
+  const oy = Math.round(origin.y);
+  const lim = NUM_SPAN / 2;
+  return (x, y) => {
+    const ix = Math.round((x - ox) * q);
+    const iy = Math.round((y - oy) * q);
+    return ix > -lim && ix < lim && iy > -lim && iy < lim ? (ix + lim) * NUM_SPAN + (iy + lim) : `${ix},${iy}`;
+  };
+}
+
 export interface UnionResult {
   readonly pts: readonly Pt[];
   /** For each boundary edge of the union: which input polygon and edge it came from. */

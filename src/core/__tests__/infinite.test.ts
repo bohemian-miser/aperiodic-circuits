@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { BUILTIN_TILINGS } from '../tilings';
 import { InfinitePlane } from '../infinite';
 import { computeAdjacency } from '../ruleset';
-import { computeCircuits } from '../circuits';
+import { computeCircuits, layChords } from '../circuits';
 import { hexTiling } from '../tilings/spectre';
 import { latticeTiling } from '../lattice';
 import { LATTICE_PRESETS } from '../latticePresets';
-import { qkey } from '../polygon';
+import { pointKeyer, qkey } from '../polygon';
 import { transPt } from '../geom';
 import { prototile } from '../tiling';
 
@@ -71,5 +71,26 @@ describe('infinite mode', () => {
     expect(r.circuits).toBe(0);
     expect(r.tails).toBe(0);
     expect(r.openLines).toBeGreaterThan(0);
+  });
+
+  it('a patch too big to trace still lays every chord, untraced', () => {
+    const plane = new InfinitePlane(hexTiling, 'Psi');
+    const instances = plane.query({ minX: -30, minY: -30, maxX: 30, maxY: 30 }).instances;
+    const rs = hexTiling.presets![0].build(hexTiling);
+    const input = { tiling: hexTiling, ruleSet: rs, instances, selection: new Set([1, 5]), combo: {} };
+    const full = computeCircuits(input);
+    const laid = layChords(input);
+    expect(full.traced).toBe(true);
+    expect(laid.traced).toBe(false);
+    expect(laid.paths).toHaveLength(0);
+    expect(laid.chords).toEqual(full.chords);
+  });
+
+  it('point keys agree far from the origin and fall back to strings past their range', () => {
+    const key = pointKeyer({ x: 1e5, y: -1e5 });
+    expect(key(1e5 + 0.1234, -1e5 + 2)).toBe(key(1e5 + 0.12341, -1e5 + 2.00001));
+    expect(typeof key(1e5 + 1, -1e5)).toBe('number');
+    expect(typeof key(1e5 + 1e5, -1e5)).toBe('string');
+    expect(key(1e5 + 1e5, -1e5)).toBe(key(1e5 + 1e5 + 1e-5, -1e5));
   });
 });

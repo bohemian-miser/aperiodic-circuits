@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { computeCircuits, type CircuitResult } from '../core/circuits';
+import { computeCircuits, layChords, type CircuitResult } from '../core/circuits';
 import { choiceCount, MAX_ENUMERATED_CROSSINGS } from '../core/matchings';
 import { analyzeParity, basisCoords, crossingCounts } from '../core/parity';
 import { className, computeAdjacency, ruleSetClasses, type RuleSet } from '../core/ruleset';
@@ -103,6 +103,11 @@ export function ExplorerPage({ route }: Props) {
   const [showClassEdges, setShowClassEdges] = useState(false);
   const [lineWidth, setLineWidth] = useState(1);
   const [screenTiles, setScreenTiles] = useStoredNumber('infinite-screen-tiles', INFINITE_SCREEN_TILES, (n) => SCREEN_TILE_OPTIONS.includes(n));
+  // Infinite mode only follows (and so colours) the lines on a patch up to
+  // this many tiles; past it the lines are drawn but not traced. 0 = always.
+  const [traceCeiling, setTraceCeiling] = useStoredNumber('infinite-trace-ceiling', TRACE_CEILING, (n) => TRACE_CEILING_OPTIONS.includes(n));
+  // The chase trail's rainbow: bands that repeat along it, or one gradient stretched over all of it.
+  const [trailRainbow, setTrailRainbow] = useStoredNumber('trail-rainbow', 0, (n) => n === 0 || n === 1);
   // Chasing a picked line (infinite mode), as on the Spectre project's map.
   const [chaseOn, setChaseOn] = useStoredFlag('chase', true);
   const [fullSpeed, setFullSpeed] = useStoredFlag('chase-full-speed', true);
@@ -140,9 +145,15 @@ export function ExplorerPage({ route }: Props) {
     if (!plane) return tiling.generate(level, root);
     return plane.query(grownRect, Math.ceil(screenTiles * INFINITE_QUERY_FACTOR)).instances;
   }, [plane, tiling, level, root, grownRect, screenTiles]);
-  const adjacency = useMemo(() => computeAdjacency(tiling, instances), [tiling, instances]);
+  // Tracing a big infinite-mode patch is what makes panning stall, so past
+  // the ceiling the lines are laid but not followed (as on the Spectre map).
+  // Nor are they while a chase runs: it regrows the patch every moment, and
+  // the lines behind the trail are dimmed anyway.
+  const chasing = chaseInfo?.status === 'running';
+  const traced = !infinite || ((traceCeiling === 0 || instances.length <= traceCeiling) && !chasing);
+  const adjacency = useMemo(() => (traced ? computeAdjacency(tiling, instances) : null), [traced, tiling, instances]);
   const circuits: CircuitResult = useMemo(
-    () => computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }),
+    () => (adjacency ? computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }) : layChords({ tiling, ruleSet, instances, selection, combo })),
     [tiling, ruleSet, instances, selection, combo, adjacency],
   );
   // Same tiles and crossings, so a new pairing animates on the canvas.
@@ -163,7 +174,7 @@ export function ExplorerPage({ route }: Props) {
     const want = new Set(pickedAt);
     for (let i = 0; i < circuits.chords.length; i++) {
       const ch = circuits.chords[i];
-      if (want.has(qkey(ch.a, 1e3)) || want.has(qkey(ch.b, 1e3))) return circuits.pathOfChord[i];
+      if ((want.has(qkey(ch.a, 1e3)) || want.has(qkey(ch.b, 1e3))) && circuits.pathOfChord[i] >= 0) return circuits.pathOfChord[i];
     }
     return null;
   }, [pickedAt, circuits]);
@@ -481,6 +492,23 @@ export function ExplorerPage({ route }: Props) {
                     ))}
                   </select>
                 </label>
+                <label className="field" title="Following every line on screen is what colours circuits by length, and it is the slow part of a regrow. Past this many tiles the lines are still drawn, in one ink, but not followed: zoom in to see circuits coloured again. A chase works at any zoom.">
+                  <span>Colour circuits up to</span>
+                  <select value={traceCeiling} onChange={(e) => setTraceCeiling(Number(e.target.value))}>
+                    {TRACE_CEILING_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n === 0 ? 'any number of tiles (slow)' : `${n.toLocaleString()} tiles${n === TRACE_CEILING ? ' (default)' : ''}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field" title="How the chased line's rainbow runs: bands repeating every 600 tiles, or one red-to-violet gradient stretched over the whole trail, which shifts as it grows (as on the Spectre map)">
+                  <span>Trail rainbow</span>
+                  <select value={trailRainbow} onChange={(e) => setTrailRainbow(Number(e.target.value))}>
+                    <option value={0}>Repeating bands</option>
+                    <option value={1}>One gradient, end to end</option>
+                  </select>
+                </label>
               </details>
             </>
           ) : (
@@ -573,18 +601,27 @@ export function ExplorerPage({ route }: Props) {
           onViewChange={infinite ? onViewChange : undefined}
           zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
           selectedRainbow={infinite}
+          trailRainbow={trailRainbow === 1 ? 'stretch' : 'repeat'}
           insets={topHeight === null || bottomHeight === null ? undefined : { top: topHeight, bottom: bottomHeight }}
           morphKey={morphKey}
         />
         <div className="stage-bottom" ref={bottomRef}>
         {quick}
         <div className="stats">
-          <span>
-            <b>{circuits.circuits.toLocaleString()}</b> circuits
-          </span>
-          <span>
-            <b>{circuits.openLines.toLocaleString()}</b> open
-          </span>
+          {circuits.traced ? (
+            <>
+              <span>
+                <b>{circuits.circuits.toLocaleString()}</b> circuits
+              </span>
+              <span>
+                <b>{circuits.openLines.toLocaleString()}</b> open
+              </span>
+            </>
+          ) : chasing ? null : (
+            <span title={`Past ${traceCeiling.toLocaleString()} tiles the lines are drawn but not followed: zoom in, or raise the limit under Advanced`}>
+              Zoom in to colour circuits
+            </span>
+          )}
           {circuits.tails > 0 && (
             <span className="bad">
               <b>{circuits.tails.toLocaleString()}</b> with tails
@@ -640,6 +677,9 @@ const INITIAL_VIEW: Rect = { minX: -16, minY: -16, maxX: 16, maxY: 16 };
 /** By default zoom-out stops at about this many tiles on screen (Advanced can change it)… */
 const INFINITE_SCREEN_TILES = 50_000;
 const SCREEN_TILE_OPTIONS = [10_000, 25_000, 50_000, 100_000, 200_000];
+/** Infinite mode traces (and colours) the lines on a patch of up to this many tiles by default, as the Spectre map does. */
+const TRACE_CEILING = 30_000;
+const TRACE_CEILING_OPTIONS = [10_000, 30_000, 60_000, 100_000, 0];
 /** …and a query returns at most this multiple of it (the screen plus a 15% margin each side). */
 const INFINITE_QUERY_FACTOR = 1.75;
 const MIN_DAMPING = 0.25;

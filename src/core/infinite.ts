@@ -55,7 +55,8 @@ export function meanTileArea(t: Tiling): number {
 
 export class InfinitePlane {
   private readonly h: Hierarchy;
-  private readonly bounds = new Map<string, Circle>();
+  /** Bounding circles by type, then level. */
+  private readonly bounds = new Map<string, Circle[]>();
   private readonly chain: Ancestor[];
   private readonly rnd: () => number;
   private readonly weight: Map<string, number>;
@@ -74,8 +75,9 @@ export class InfinitePlane {
 
   /** Bounding circle of a (type, level) supertile in its own frame. */
   circle(type: string, level: number): Circle {
-    const key = `${type}/${level}`;
-    const hit = this.bounds.get(key);
+    let byLevel = this.bounds.get(type);
+    if (!byLevel) this.bounds.set(type, (byLevel = []));
+    const hit = byLevel[level];
     if (hit) return hit;
     let out: Circle;
     if (level === 0) {
@@ -93,7 +95,7 @@ export class InfinitePlane {
         out = { c, r: Math.max(...kids.map((k) => Math.hypot(k.c.x - c.x, k.c.y - c.y) + k.r)) };
       }
     }
-    this.bounds.set(key, out);
+    byLevel[level] = out;
     return out;
   }
 
@@ -160,35 +162,39 @@ export class InfinitePlane {
   /** Every sample point of the view lies in some tile. */
   private fills(rect: Rect, instances: readonly TileInstance[]): boolean {
     // Leaves are placed rigidly, so a prototile's bounding circle carries
-    // over: test that first and transform a polygon only when it might hold
-    // the sample.
-    const n = instances.length;
-    const cx = new Float64Array(n);
-    const cy = new Float64Array(n);
-    const rr = new Float64Array(n);
-    instances.forEach((inst, k) => {
+    // over: each tile only tests the samples inside its circle, and
+    // transforms its polygon only when there is one.
+    const N = 5;
+    // Nudge off the exact grid so samples don't land on shared edges.
+    const sx = (i: number) => rect.minX + ((i + 0.5137) / N) * (rect.maxX - rect.minX);
+    const sy = (j: number) => rect.minY + ((j + 0.4729) / N) * (rect.maxY - rect.minY);
+    const dx = (rect.maxX - rect.minX) / N;
+    const dy = (rect.maxY - rect.minY) / N;
+    const hit = new Uint8Array(N * N);
+    let left = N * N;
+    for (const inst of instances) {
       const b = this.leafCircle(inst.type);
       const c = transPt(inst.xform, b.c);
-      cx[k] = c.x;
-      cy[k] = c.y;
-      rr[k] = b.r * b.r;
-    });
-    const N = 5;
-    for (let i = 0; i < N; i++) {
-      for (let j = 0; j < N; j++) {
-        // Nudge off the exact grid so samples don't land on shared edges.
-        const x = rect.minX + ((i + 0.5137) / N) * (rect.maxX - rect.minX);
-        const y = rect.minY + ((j + 0.4729) / N) * (rect.maxY - rect.minY);
-        let inside = false;
-        for (let k = 0; k < n && !inside; k++) {
-          if ((x - cx[k]) ** 2 + (y - cy[k]) ** 2 > rr[k]) continue;
-          const inst = instances[k];
-          inside = pointInPolygon(x, y, prototile(this.tiling, inst.type).pts.map((p) => transPt(inst.xform, p)));
+      const i0 = Math.max(0, Math.ceil((c.x - b.r - rect.minX) / dx - 0.5137));
+      const i1 = Math.min(N - 1, Math.floor((c.x + b.r - rect.minX) / dx - 0.5137));
+      const j0 = Math.max(0, Math.ceil((c.y - b.r - rect.minY) / dy - 0.4729));
+      const j1 = Math.min(N - 1, Math.floor((c.y + b.r - rect.minY) / dy - 0.4729));
+      let pts: Pt[] | null = null;
+      for (let i = i0; i <= i1; i++) {
+        for (let j = j0; j <= j1; j++) {
+          if (hit[i * N + j]) continue;
+          const x = sx(i);
+          const y = sy(j);
+          if ((x - c.x) ** 2 + (y - c.y) ** 2 > b.r * b.r) continue;
+          pts ??= prototile(this.tiling, inst.type).pts.map((p) => transPt(inst.xform, p));
+          if (pointInPolygon(x, y, pts)) {
+            hit[i * N + j] = 1;
+            if (--left === 0) return true;
+          }
         }
-        if (!inside) return false;
       }
     }
-    return true;
+    return left === 0;
   }
 
   private readonly leafCircles = new Map<string, Circle>();

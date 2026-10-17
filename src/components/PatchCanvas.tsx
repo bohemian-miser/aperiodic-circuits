@@ -33,6 +33,12 @@ export interface PatchCanvasProps {
   readonly zoomLimit?: { readonly tileArea: number; readonly maxTiles: number };
   /** Draw the picked line as a rainbow from end to end (infinite mode's traced strand). */
   readonly selectedRainbow?: boolean;
+  /**
+   * The chase trail's rainbow: bands repeating every {@link TRAIL_PERIOD}
+   * tiles, or one gradient stretched over the whole held trail (the Spectre
+   * map's), which shifts along as the trail grows.
+   */
+  readonly trailRainbow?: 'repeat' | 'stretch';
   /** A line being chased: walked on, drawn as a trail over everything, with the camera riding its head. */
   readonly chase?: StrandChase | null;
   /** Chase pace in tiles per second, or null to go as fast as the camera can follow. */
@@ -58,6 +64,8 @@ export interface PatchCanvasProps {
 const TRAIL_PERIOD = 600;
 /** Trail chords per drawing chunk. */
 const TRAIL_CHUNK = 512;
+/** Colour steps in the trail's rainbow. */
+const TRAIL_STEPS = 47;
 
 interface TrailChunk {
   minX: number;
@@ -65,6 +73,7 @@ interface TrailChunk {
   maxX: number;
   maxY: number;
   readonly all: Path2D;
+  /** By colour, repeating bands only: their colour is fixed per chord. */
   readonly buckets: Map<string, Path2D>;
 }
 
@@ -149,14 +158,11 @@ export function PatchCanvas(props: PatchCanvasProps) {
   const frame = useRef(0);
   const size = useRef({ w: 1, h: 1 });
 
-  // Geometry batched into a few Path2Ds so redraws stay cheap.
+  // Geometry batched into a few Path2Ds so redraws stay cheap. The edges are
+  // only built once something draws them: zoomed well out (infinite mode
+  // regrowing 100,000 tiles as you pan) nothing does.
   const geo = useMemo(() => {
     const fills = new Map<string, Path2D>();
-    const outline = new Path2D();
-    const hidden = new Path2D();
-    const byClass = new Map<number, Path2D>();
-    const seamIdx = new Map<string, number[]>();
-    if (ruleSet) for (const p of tiling.prototiles) seamIdx.set(p.id, edgeSeamIndex(ruleSet, p.id, p.pts.length));
     for (const inst of instances) {
       const proto = prototile(tiling, inst.type);
       const pts = instancePts(tiling, inst);
@@ -166,24 +172,37 @@ export function PatchCanvas(props: PatchCanvasProps) {
       // No closePath: fill closes each subpath anyway, and closePath gets slow
       // on a Path2D holding tens of thousands of them.
       for (let i = 1; i < pts.length; i++) f.lineTo(pts[i].x, pts[i].y);
-      const hid = proto.hiddenEdges;
-      const soe = seamIdx.get(inst.type);
-      for (let e = 0; e < pts.length; e++) {
-        const a = pts[e];
-        const b = pts[(e + 1) % pts.length];
-        const target = hid?.includes(e) ? hidden : outline;
-        target.moveTo(a.x, a.y);
-        target.lineTo(b.x, b.y);
-        if (soe && soe[e] >= 0) {
-          const cls = ruleSet!.seams[inst.type][soe[e]].cls;
-          let cp = byClass.get(cls);
-          if (!cp) byClass.set(cls, (cp = new Path2D()));
-          cp.moveTo(a.x, a.y);
-          cp.lineTo(b.x, b.y);
+    }
+    let edges: { outline: Path2D; hidden: Path2D; byClass: Map<number, Path2D> } | null = null;
+    const getEdges = () => {
+      if (edges) return edges;
+      const outline = new Path2D();
+      const hidden = new Path2D();
+      const byClass = new Map<number, Path2D>();
+      const seamIdx = new Map<string, number[]>();
+      if (ruleSet) for (const p of tiling.prototiles) seamIdx.set(p.id, edgeSeamIndex(ruleSet, p.id, p.pts.length));
+      for (const inst of instances) {
+        const pts = instancePts(tiling, inst);
+        const hid = prototile(tiling, inst.type).hiddenEdges;
+        const soe = seamIdx.get(inst.type);
+        for (let e = 0; e < pts.length; e++) {
+          const a = pts[e];
+          const b = pts[(e + 1) % pts.length];
+          const target = hid?.includes(e) ? hidden : outline;
+          target.moveTo(a.x, a.y);
+          target.lineTo(b.x, b.y);
+          if (soe && soe[e] >= 0) {
+            const cls = ruleSet!.seams[inst.type][soe[e]].cls;
+            let cp = byClass.get(cls);
+            if (!cp) byClass.set(cls, (cp = new Path2D()));
+            cp.moveTo(a.x, a.y);
+            cp.lineTo(b.x, b.y);
+          }
         }
       }
-    }
-    return { fills, outline, hidden, byClass, bounds: patchBounds(tiling, instances) };
+      return (edges = { outline, hidden, byClass });
+    };
+    return { fills, edges: getEdges, bounds: patchBounds(tiling, instances) };
   }, [tiling, instances, ruleSet]);
 
   const chordGeo = useMemo(() => {
@@ -234,24 +253,27 @@ export function PatchCanvas(props: PatchCanvasProps) {
   // The chase trail, kept as Path2Ds in chunks of consecutive chords that
   // are only ever appended to, so a frame strokes just the chunks on screen
   // and the hold drops whole chunks off the back.
-  const trail = useRef<{ chase: StrandChase; built: number; chunks: Map<number, TrailChunk> } | null>(null);
+  const stretch = props.trailRainbow === 'stretch';
+  const trail = useRef<{ chase: StrandChase; stretch: boolean; built: number; chunks: Map<number, TrailChunk> } | null>(null);
   const drawTrail = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
     if (!chase) return;
     let T = trail.current;
-    if (!T || T.chase !== chase) T = trail.current = { chase, built: 0, chunks: new Map() };
+    if (!T || T.chase !== chase || T.stretch !== stretch) T = trail.current = { chase, stretch, built: 0, chunks: new Map() };
     const end = chase.dropped + chase.chords;
     for (let g = Math.max(T.built, chase.dropped); g < end; g++) {
       const ch = chase.chord(g - chase.dropped);
       const k = Math.floor(g / TRAIL_CHUNK);
       let C = T.chunks.get(k);
       if (!C) T.chunks.set(k, (C = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, all: new Path2D(), buckets: new Map() }));
-      const u = (g / TRAIL_PERIOD) % 2;
-      const col = rainbow(Math.round((u < 1 ? u : 2 - u) * 47) / 47);
-      let b = C.buckets.get(col);
-      if (!b) C.buckets.set(col, (b = new Path2D()));
-      for (const q of [C.all, b]) {
-        q.moveTo(ch.a.x, ch.a.y);
-        q.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+      C.all.moveTo(ch.a.x, ch.a.y);
+      C.all.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+      if (!stretch) {
+        const u = (g / TRAIL_PERIOD) % 2;
+        const col = rainbow(Math.round((u < 1 ? u : 2 - u) * TRAIL_STEPS) / TRAIL_STEPS);
+        let b = C.buckets.get(col);
+        if (!b) C.buckets.set(col, (b = new Path2D()));
+        b.moveTo(ch.a.x, ch.a.y);
+        b.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
       }
       for (const p of [ch.a, ch.b, ch.c]) {
         C.minX = Math.min(C.minX, p.x);
@@ -272,24 +294,59 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const minY = -v.ty / v.scale - pad;
     const maxX = (w - v.tx) / v.scale + pad;
     const maxY = (h - v.ty) / v.scale + pad;
-    const shown = [...T.chunks.values()].filter((C) => C.maxX >= minX && C.minX <= maxX && C.maxY >= minY && C.minY <= maxY);
+    const shown = [...T.chunks.entries()].filter(([, C]) => C.maxX >= minX && C.minX <= maxX && C.maxY >= minY && C.minY <= maxY);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
     ctx.lineWidth = lw * 3.2;
-    for (const C of shown) ctx.stroke(C.all);
+    for (const [, C] of shown) ctx.stroke(C.all);
     ctx.lineWidth = lw * 1.8;
     // A closed circuit takes one solid colour by its length, as on the patch.
     if (chase.status === 'closed') {
       ctx.strokeStyle = circuitColor(circuits, chase.steps);
-      for (const C of shown) ctx.stroke(C.all);
+      for (const [, C] of shown) ctx.stroke(C.all);
       // Its head is back at the start: a marker there would read as a gap in the loop.
       return;
     }
-    for (const C of shown) {
-      for (const [col, b] of C.buckets) {
-        ctx.strokeStyle = col;
-        ctx.stroke(b);
+    if (!stretch) {
+      for (const [, C] of shown) {
+        for (const [col, b] of C.buckets) {
+          ctx.strokeStyle = col;
+          ctx.stroke(b);
+        }
+      }
+    } else {
+      // One gradient over the chords held, so every colour moves as the trail
+      // grows: a chunk inside one colour step is stroked whole, and only the
+      // few that straddle a step (at most one per step) are split, per frame.
+      const span = Math.max(1, chase.chords - 1);
+      const step = (g: number) => Math.round(((g - chase.dropped) / span) * TRAIL_STEPS);
+      for (const [k, C] of shown) {
+        const g0 = Math.max(k * TRAIL_CHUNK, chase.dropped);
+        const g1 = Math.min((k + 1) * TRAIL_CHUNK, end) - 1;
+        if (g1 < g0) continue;
+        const s0 = step(g0);
+        if (s0 === step(g1)) {
+          ctx.strokeStyle = rainbow(s0 / TRAIL_STEPS);
+          ctx.stroke(C.all);
+          continue;
+        }
+        let path = new Path2D();
+        let at = s0;
+        for (let g = g0; g <= g1; g++) {
+          const sg = step(g);
+          if (sg !== at) {
+            ctx.strokeStyle = rainbow(at / TRAIL_STEPS);
+            ctx.stroke(path);
+            path = new Path2D();
+            at = sg;
+          }
+          const ch = chase.chord(g - chase.dropped);
+          path.moveTo(ch.a.x, ch.a.y);
+          path.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+        }
+        ctx.strokeStyle = rainbow(at / TRAIL_STEPS);
+        ctx.stroke(path);
       }
     }
     const hd = chase.headPt;
@@ -338,17 +395,17 @@ export function PatchCanvas(props: PatchCanvasProps) {
       if (showOutlines && v.scale > 2) {
         c.strokeStyle = cssVar(canvas, '--tile-edge', 'rgba(40,40,40,0.55)');
         c.lineWidth = Math.min(1.2, v.scale / 12) * px;
-        c.stroke(geo.outline);
+        c.stroke(geo.edges().outline);
         c.save();
         c.globalAlpha = 0.35;
         c.setLineDash([3 * px, 3 * px]);
-        c.stroke(geo.hidden);
+        c.stroke(geo.edges().hidden);
         c.restore();
       }
       if (classEdges) {
         c.lineWidth = Math.max(1.5 * px, Math.min(0.12, 5 * px));
         c.lineCap = 'round';
-        for (const [cls, p] of geo.byClass) {
+        for (const [cls, p] of geo.edges().byClass) {
           if (classEdges !== 'all' && !classEdges.has(cls)) continue;
           c.strokeStyle = classColor(cls);
           c.stroke(p);
@@ -436,7 +493,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
         ctx.stroke(path);
       }
       ctx.globalAlpha = 1;
-      drawTrail(ctx, canvas);
+      drawTrailRef.current(ctx, canvas);
       reportView();
       return;
     }
@@ -477,9 +534,9 @@ export function PatchCanvas(props: PatchCanvasProps) {
       sctx.drawImage(canvas, 0, 0);
     }
     snapshot.current = { canvas: snap, view: { ...v }, ms: performance.now() - t0 };
-    drawTrail(ctx, canvas);
+    drawTrailRef.current(ctx, canvas);
     reportView();
-  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase]);
+  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, props.trailRainbow, chase]);
 
   // Tell the owner what's on screen once the view stops moving.
   const viewTimer = useRef(0);
