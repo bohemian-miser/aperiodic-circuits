@@ -804,6 +804,27 @@ function QuickControls(props: QuickProps) {
   const { basis, basisCoords, onToggleGroup, basisOpen, onBasisOpen } = props;
   return (
     <div className={cls}>
+      {/* First, so its coming and going leaves the edges and tiles in place. */}
+      {total > 1 ? (
+        <div className="quick-combo">
+          <button type="button" onClick={() => onStep(-1)} aria-label="Previous pairing">
+            ‹
+          </button>
+          <span className="quick-count" title={`Pairing ${(index + 1).toLocaleString()} of ${total.toLocaleString()}`}>
+            Pairing
+            <br />
+            <b>
+              {shortCount(index + 1)}/{shortCount(total)}
+            </b>
+          </span>
+          <button type="button" onClick={() => onStep(1)}>
+            Next pairing ›
+          </button>
+          <button type="button" className="primary" onClick={onRandom}>
+            Random
+          </button>
+        </div>
+      ) : null}
       <div className={`quick-edges${classes.length > 12 ? ' many' : ''}`}>
         <span className="quick-label">Edges</span>
         <span className={`quick-dot ${tailFree ? 'good' : 'bad'}`} title={tailFree ? 'Tail-free' : `Odd crossings on ${oddTypes.join(', ')}`} />
@@ -885,26 +906,6 @@ function QuickControls(props: QuickProps) {
           })}
         </div>
       )}
-      {total > 1 ? (
-        <div className="quick-combo">
-          <button type="button" onClick={() => onStep(-1)} aria-label="Previous pairing">
-            ‹
-          </button>
-          <span className="quick-count" title={`Pairing ${(index + 1).toLocaleString()} of ${total.toLocaleString()}`}>
-            Pairing
-            <br />
-            <b>
-              {shortCount(index + 1)}/{shortCount(total)}
-            </b>
-          </span>
-          <button type="button" onClick={() => onStep(1)}>
-            Next pairing ›
-          </button>
-          <button type="button" className="primary" onClick={onRandom}>
-            Random
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }

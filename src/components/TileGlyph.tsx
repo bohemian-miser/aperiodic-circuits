@@ -54,6 +54,26 @@ export function TileGlyph(props: TileGlyphProps) {
   const morph = useChordMorph(chords?.chords ?? null, [tiling, ruleSet, type, selection]);
   const interactive = !!onEdgeClick;
 
+  const label = (m: Pt, cls: number, lit: boolean, key: string | number) => (
+    <text
+      key={key}
+      x={m.x}
+      y={m.y}
+      fontSize={sw * 4.2 * labelScale}
+      textAnchor="middle"
+      dominantBaseline="central"
+      fill={classColor(cls)}
+      fillOpacity={lit ? 1 : 0.6}
+      stroke="var(--panel)"
+      strokeWidth={sw * 0.9 * labelScale}
+      strokeOpacity={0.75}
+      paintOrder="stroke"
+      className="edge-label"
+    >
+      {className(ruleSet, cls)}
+    </text>
+  );
+
   return (
     <svg className={`tile-glyph${interactive ? ' interactive' : ''}`} viewBox={vb} width={size} height={size} role="img" aria-label={proto.name}>
       <polygon points={pts.map((p) => `${p.x},${p.y}`).join(' ')} fill={proto.color} fillOpacity={0.55} stroke="none" />
@@ -91,30 +111,11 @@ export function TileGlyph(props: TileGlyphProps) {
                 <title>{`Edge ${e}${cls === null ? ' (no class)' : `, seam ${si}, class ${className(ruleSet, cls)}`}`}</title>
               </line>
             )}
-            {showLabels && cls !== null && (() => {
-              const m = lerpPt(lerpPt(a, b, 0.5), ctr, labelInset);
-              return (
-                <text
-                  x={m.x}
-                  y={m.y}
-                  fontSize={sw * 4.2 * labelScale}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fill={classColor(cls)}
-                  fillOpacity={lit ? 1 : 0.6}
-                  stroke="var(--panel)"
-                  strokeWidth={sw * 0.9 * labelScale}
-                  strokeOpacity={0.75}
-                  paintOrder="stroke"
-                  className="edge-label"
-                >
-                  {className(ruleSet, cls)}
-                </text>
-              );
-            })()}
           </g>
         );
       })}
+      {/* One label per seam, at its centre: a seam's edges all share its class. */}
+      {showLabels && seams.map((q, i) => label(lerpPt(seamCenter(pts, q), ctr, labelInset), q.cls, !selection || selection.has(q.cls), `s${i}`))}
       {(morph ? morph.m.still.map((i) => chords!.chords[i]) : chords?.chords)?.map((c, i) => (
         <path key={i} d={`M${c.a.x},${c.a.y} Q${c.c.x},${c.c.y} ${c.b.x},${c.b.y}`} fill="none" stroke="var(--ink)" strokeWidth={sw * 1.3} strokeLinecap="round" />
       ))}
