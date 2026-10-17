@@ -133,6 +133,8 @@ export function ExplorerPage({ route }: Props) {
     () => computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }),
     [tiling, ruleSet, instances, selection, combo, adjacency],
   );
+  // Same tiles and crossings, so a new pairing animates on the canvas.
+  const morphKey = useMemo(() => ({}), [tiling, ruleSet, instances, selection]);
   useEffect(() => setPickedAt(null), [tiling, ruleSet, root, seed, infinite]);
   // A chase belongs to one plane and one set of lines.
   useEffect(() => setChase(null), [plane, ruleSet, selection, combo, chaseOn]);
@@ -602,6 +604,7 @@ export function ExplorerPage({ route }: Props) {
           onViewChange={infinite ? onViewChange : undefined}
           zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
           selectedRainbow={infinite}
+          morphKey={morphKey}
         />
         <div className="stats">
           <span>

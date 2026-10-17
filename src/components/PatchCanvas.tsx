@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type { CircuitResult } from '../core/circuits';
 import type { Pt } from '../core/geom';
 import { edgeSeamIndex, type RuleSet } from '../core/ruleset';
@@ -6,6 +6,7 @@ import { instancePts, patchBounds, prototile, type TileInstance, type Tiling } f
 import { classColor, lengthHue, OPEN_COLOR, rainbow, TAIL_COLOR } from '../colors';
 import type { StrandChase } from '../core/chase';
 import { advanceFollowCamera, createFollowCamera } from '../core/followCamera';
+import { halfAt, MORPH_MS, morphChords, morphProgress, prefersReducedMotion, type ChordMorph } from '../core/morph';
 
 export interface PatchCanvasProps {
   readonly tiling: Tiling;
@@ -40,6 +41,11 @@ export interface PatchCanvasProps {
   readonly chaseDamping?: number;
   /** Called a few times a second while the chase moves on. */
   readonly onChaseTick?: () => void;
+  /**
+   * While this stays the same, a change of lines (a new pairing) animates:
+   * each crossing's line swings over from its old partner to its new one.
+   */
+  readonly morphKey?: unknown;
 }
 
 /** The chase trail's rainbow runs red to violet and back every this many tiles. */
@@ -155,8 +161,14 @@ export function PatchCanvas(props: PatchCanvasProps) {
       p.moveTo(ch.a.x, ch.a.y);
       p.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
     });
-    return { byColor, colors };
+    return { byColor, colors, chordColor };
   }, [circuits, rainbowLines]);
+
+  // A pairing change in progress: unchanged chords batched once, the moving
+  // halves rebuilt every frame.
+  const morph = useRef<{ start: number; still: Map<string, Path2D>; moving: ChordMorph; colors: string[] } | null>(null);
+  const morphFrom = useRef<{ circuits?: CircuitResult; key: unknown }>({ key: undefined });
+  const morphRaf = useRef(0);
 
   const selectedGeo = useMemo(() => {
     if (!circuits || selectedPath === null || !circuits.paths[selectedPath]) return null;
@@ -290,18 +302,38 @@ export function PatchCanvas(props: PatchCanvasProps) {
         ctx.stroke(p);
       }
     }
+    const M = morph.current;
+    const u = M ? morphProgress(M.start, performance.now()) : 1;
     if (chordGeo) {
       const lw = chordWidth(v.scale, props.lineWidth);
       ctx.lineWidth = lw;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.globalAlpha = dim ? 0.25 : 1;
-      for (const [color, p] of chordGeo.byColor) {
-        ctx.strokeStyle = color;
-        ctx.stroke(p);
+      if (M && u < 1) {
+        const moving = new Map<string, Path2D>();
+        for (const h of M.moving.moving) {
+          const col = M.colors[h.chord];
+          let p = moving.get(col);
+          if (!p) moving.set(col, (p = new Path2D()));
+          const { e, q, m } = halfAt(h, u);
+          p.moveTo(e.x, e.y);
+          p.quadraticCurveTo(q.x, q.y, m.x, m.y);
+        }
+        for (const paths of [M.still, moving]) {
+          for (const [color, p] of paths) {
+            ctx.strokeStyle = color;
+            ctx.stroke(p);
+          }
+        }
+      } else {
+        for (const [color, p] of chordGeo.byColor) {
+          ctx.strokeStyle = color;
+          ctx.stroke(p);
+        }
       }
       ctx.globalAlpha = 1;
-      if (selectedGeo) {
+      if (selectedGeo && !(M && u < 1)) {
         ctx.strokeStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
         ctx.lineWidth = lw * 3.2;
         ctx.stroke(selectedGeo.all);
@@ -516,6 +548,39 @@ export function PatchCanvas(props: PatchCanvasProps) {
   useEffect(() => {
     schedule();
   }, [schedule]);
+
+  // New lines on the same tiles: animate the change of pairing. A layout
+  // effect, so the first frame drawn for the new lines is already the morph.
+  useLayoutEffect(() => {
+    const prev = morphFrom.current;
+    morphFrom.current = { circuits, key: props.morphKey };
+    cancelAnimationFrame(morphRaf.current);
+    morph.current = null;
+    if (!circuits || !chordGeo || !prev.circuits || prev.circuits === circuits || prev.key !== props.morphKey || props.morphKey === undefined || prefersReducedMotion()) return;
+    const m = morphChords(prev.circuits.chords, circuits.chords, (ch) => ch.inst);
+    if (!m || m.moving.length === 0) return;
+    const still = new Map<string, Path2D>();
+    for (const i of m.still) {
+      const ch = circuits.chords[i];
+      const col = chordGeo.chordColor[i];
+      let p = still.get(col);
+      if (!p) still.set(col, (p = new Path2D()));
+      p.moveTo(ch.a.x, ch.a.y);
+      p.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+    }
+    const start = performance.now();
+    morph.current = { start, still, moving: m, colors: chordGeo.chordColor };
+    const tick = () => {
+      scheduleRef.current();
+      if (performance.now() - start < MORPH_MS) morphRaf.current = requestAnimationFrame(tick);
+      else {
+        morph.current = null;
+        scheduleRef.current();
+      }
+    };
+    morphRaf.current = requestAnimationFrame(tick);
+  }, [circuits, chordGeo]);
+  useEffect(() => () => cancelAnimationFrame(morphRaf.current), []);
 
   // Re-draw on theme change.
   useEffect(() => {
