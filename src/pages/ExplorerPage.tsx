@@ -792,21 +792,9 @@ function QuickControls(props: QuickProps) {
   const { basis, basisCoords, onToggleGroup, basisOpen, onBasisOpen } = props;
   return (
     <div className={cls}>
-      <div className="quick-edges">
+      <div className={`quick-edges${classes.length > 12 ? ' many' : ''}`}>
         <span className="quick-label">Edges</span>
         <span className={`quick-dot ${tailFree ? 'good' : 'bad'}`} title={tailFree ? 'Tail-free' : `Odd crossings on ${oddTypes.join(', ')}`} />
-        {classes.map((c) => (
-          <button
-            type="button"
-            key={c}
-            className={`chip${selection.has(c) ? ' on' : ''}`}
-            style={{ ['--chip' as string]: classColor(c) }}
-            onClick={() => onToggle(c)}
-            aria-pressed={selection.has(c)}
-          >
-            {className(ruleSet, c)}
-          </button>
-        ))}
         {basis.length > 0 && (
           <button
             type="button"
@@ -828,9 +816,21 @@ function QuickControls(props: QuickProps) {
           <span className="long">Tiles: {TILE_SIZE_NAMES[tileSize]}</span>
           <span className="short">⬡{['L', 'S', '–'][tileSize]}</span>
         </button>
+        {classes.map((c) => (
+          <button
+            type="button"
+            key={c}
+            className={`chip${selection.has(c) ? ' on' : ''}`}
+            style={{ ['--chip' as string]: classColor(c) }}
+            onClick={() => onToggle(c)}
+            aria-pressed={selection.has(c)}
+          >
+            {className(ruleSet, c)}
+          </button>
+        ))}
       </div>
       {basisOpen && basis.length > 0 && (
-        <div className="quick-basis">
+        <div className={`quick-basis${basis.length > 8 ? ' many' : ''}`}>
           {basis.map((g, i) => {
             const label = g.map((c) => className(ruleSet, c)).join(ruleSet.classNames ? ',' : '·');
             const on = basisCoords?.[i] ?? false;
@@ -873,26 +873,33 @@ function QuickControls(props: QuickProps) {
           })}
         </div>
       )}
-      <div className="quick-combo">
-        <button type="button" onClick={() => onStep(-1)} disabled={total <= 1} aria-label="Previous pairing">
-          ‹
-        </button>
-        <span className="quick-count">
-          Pairing
-          <br />
-          <b>
-            {(index + 1).toLocaleString()}/{total.toLocaleString()}
-          </b>
-        </span>
-        <button type="button" onClick={() => onStep(1)} disabled={total <= 1}>
-          Next pairing ›
-        </button>
-        <button type="button" className="primary" onClick={onRandom} disabled={total <= 1}>
-          Random
-        </button>
-      </div>
+      {total > 1 ? (
+        <div className="quick-combo">
+          <button type="button" onClick={() => onStep(-1)} aria-label="Previous pairing">
+            ‹
+          </button>
+          <span className="quick-count" title={`Pairing ${(index + 1).toLocaleString()} of ${total.toLocaleString()}`}>
+            Pairing
+            <br />
+            <b>
+              {shortCount(index + 1)}/{shortCount(total)}
+            </b>
+          </span>
+          <button type="button" onClick={() => onStep(1)}>
+            Next pairing ›
+          </button>
+          <button type="button" className="primary" onClick={onRandom}>
+            Random
+          </button>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+/** Counts that won't fit the stepper shrink to "156T". */
+function shortCount(n: number): string {
+  return n < 100_000 ? n.toLocaleString() : new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 }
 
 interface SurveyProps {

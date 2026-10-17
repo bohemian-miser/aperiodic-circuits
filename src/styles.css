@@ -998,10 +998,12 @@ h3.sub {
 
 /* Explorer quick controls: edges, each tile's pairing, and a pairing stepper by the field. */
 
+/* The sections flow like words: with few edges and tiles they share a line. */
 .quick {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
   padding: 5px 8px;
   background: var(--panel);
   z-index: 2;
@@ -1013,7 +1015,31 @@ h3.sub {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  max-width: 100%;
 }
+
+/* With lots of edges (or groups) every chip shrinks. */
+.quick-edges.many .chip {
+  min-width: 22px;
+  padding: 0 4px;
+  font-size: 11px;
+  border-width: 1.5px;
+}
+
+.quick-edges.many {
+  gap: 3px;
+}
+
+.quick-basis.many .chip {
+  padding: 0 5px;
+  font-size: 10.5px;
+}
+
+.quick-basis.many {
+  gap: 3px;
+}
+
+
 
 .quick-label {
   flex-shrink: 0;
@@ -1057,10 +1083,7 @@ h3.sub {
   color: var(--muted);
 }
 
-/* The first button after the edge chips pushes the toggles to the right. */
-.quick-edges .chip + :not(.chip) {
-  margin-left: auto;
-}
+
 
 .quick-toggle.on {
   color: var(--panel);
@@ -1071,13 +1094,18 @@ h3.sub {
 }
 
 .quick-tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 2px;
+  max-width: 100%;
 }
 
-.quick-tiles.small {
-  grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+.quick-tile {
+  width: 58px;
+}
+
+.quick-tiles.small .quick-tile {
+  width: 37px;
 }
 
 .quick-tile {
@@ -1156,6 +1184,7 @@ button.quick-tile {
 }
 
 .quick-combo {
+  flex: 1 1 250px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1175,6 +1204,7 @@ button.quick-tile {
 
 .quick-count {
   min-width: 48px;
+  white-space: nowrap;
   text-align: center;
   font-size: 10.5px;
   line-height: 1.15;
