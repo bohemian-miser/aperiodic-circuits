@@ -18,6 +18,8 @@ export interface Bezier {
 export interface MovingHalf {
   /** Index of the chord in the new list (for its colour). */
   readonly chord: number;
+  /** The chord this half swings away from in the old list, or -1. */
+  readonly from: number;
   readonly e: Pt;
   readonly q0: Pt;
   readonly m0: Pt;
@@ -28,6 +30,8 @@ export interface MovingHalf {
 export interface ChordMorph {
   /** New chords that were there before too, unchanged. */
   readonly still: readonly number[];
+  /** Where each of `still` was in the old list. */
+  readonly stillFrom: readonly number[];
   readonly moving: readonly MovingHalf[];
 }
 
@@ -52,6 +56,7 @@ function halfOf(ch: Bezier, e: Pt): { q: Pt; m: Pt } {
 export function morphChords<T extends Bezier>(from: readonly T[], to: readonly T[], group: (ch: T) => unknown = () => 0): ChordMorph | null {
   if (from.length !== to.length) return null;
   const still: number[] = [];
+  const stillFrom: number[] = [];
   const moving: MovingHalf[] = [];
   let s = 0;
   while (s < to.length) {
@@ -61,26 +66,27 @@ export function morphChords<T extends Bezier>(from: readonly T[], to: readonly T
     for (let k = s; k < t; k++) if (group(from[k]) !== g) return null;
     for (let k = s; k < t; k++) {
       const ch = to[k];
-      let was = false;
-      for (let j = s; j < t && !was; j++) {
+      let was = -1;
+      for (let j = s; j < t && was < 0; j++) {
         const o = from[j];
-        was = (same(o.a, ch.a) && same(o.b, ch.b)) || (same(o.a, ch.b) && same(o.b, ch.a));
+        if ((same(o.a, ch.a) && same(o.b, ch.b)) || (same(o.a, ch.b) && same(o.b, ch.a))) was = j;
       }
-      if (was) {
+      if (was >= 0) {
         still.push(k);
+        stillFrom.push(was);
         continue;
       }
       for (const e of [ch.a, ch.b]) {
         const now = halfOf(ch, e);
-        let old: Bezier | undefined;
-        for (let j = s; j < t && !old; j++) if (same(from[j].a, e) || same(from[j].b, e)) old = from[j];
-        const before = old ? halfOf(old, e) : now;
-        moving.push({ chord: k, e, q0: before.q, m0: before.m, q1: now.q, m1: now.m });
+        let old = -1;
+        for (let j = s; j < t && old < 0; j++) if (same(from[j].a, e) || same(from[j].b, e)) old = j;
+        const before = old >= 0 ? halfOf(from[old], e) : now;
+        moving.push({ chord: k, from: old, e, q0: before.q, m0: before.m, q1: now.q, m1: now.m });
       }
     }
     s = t;
   }
-  return { still, moving };
+  return { still, stillFrom, moving };
 }
 
 /** A moving half at time `u` in [0, 1]. */
