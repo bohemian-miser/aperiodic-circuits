@@ -91,6 +91,16 @@ export function pathColors(r: CircuitResult): string[] {
   return r.paths.map((p) => (p.closed ? lengthHue(rank.get(p.chords.length) ?? 0) : p.ends.includes('tail') ? TAIL_COLOR : OPEN_COLOR));
 }
 
+/**
+ * The colour of a circuit of length `len`: the patch's colour for that length,
+ * or, for a length not on the patch, the one it would get if it were.
+ */
+function circuitColor(r: CircuitResult | null | undefined, len: number): string {
+  let rank = 0;
+  for (const l of r?.circuitLengths.keys() ?? []) if (l < len) rank++;
+  return lengthHue(rank);
+}
+
 /** Chord line width in world units at this zoom. */
 function chordWidth(scale: number, lineWidth = 1): number {
   const px = 1 / scale;
@@ -237,6 +247,13 @@ export function PatchCanvas(props: PatchCanvasProps) {
     ctx.lineWidth = lw * 3.2;
     for (const C of shown) ctx.stroke(C.all);
     ctx.lineWidth = lw * 1.8;
+    // A closed circuit takes one solid colour by its length, as on the patch.
+    if (chase.status === 'closed') {
+      ctx.strokeStyle = circuitColor(circuits, chase.steps);
+      for (const C of shown) ctx.stroke(C.all);
+      // Its head is back at the start: a marker there would read as a gap in the loop.
+      return;
+    }
     for (const C of shown) {
       for (const [col, b] of C.buckets) {
         ctx.strokeStyle = col;
@@ -447,7 +464,8 @@ export function PatchCanvas(props: PatchCanvasProps) {
   useEffect(() => () => window.clearTimeout(settleTimer.current), []);
 
   // The chase: walk the line on at its pace, and ride the camera along it.
-  // Dragging takes the camera back until you let go; wheel zoom stays yours.
+  // Dragging takes the camera back until you let go (for good once the line
+  // has closed or hit a tail); wheel zoom stays yours.
   const dragging = useRef(false);
   const chaseOpts = useRef({ pace: props.chasePace ?? null, damping: props.chaseDamping ?? 1, onTick: props.onChaseTick });
   chaseOpts.current = { pace: props.chasePace ?? null, damping: props.chaseDamping ?? 1, onTick: props.onChaseTick };
@@ -463,7 +481,12 @@ export function PatchCanvas(props: PatchCanvasProps) {
       const dt = Math.min(100, now - last);
       last = now;
       raf = requestAnimationFrame(tick);
-      if (dragging.current) return;
+      if (dragging.current) {
+        // A finished line has nothing left to show: a drag takes the camera
+        // back for good, rather than until you let go.
+        if (chase.status !== 'running') cancelAnimationFrame(raf);
+        return;
+      }
       const v = view.current;
       const { w, h } = size.current;
       const viewMin = Math.min(w, h) / v.scale;
