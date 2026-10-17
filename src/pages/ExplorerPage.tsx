@@ -523,119 +523,7 @@ export function ExplorerPage({ route }: Props) {
         </section>
 
         <section>
-          <h2>Edge selection</h2>
-          <p className="hint">Pick which classes carry a line. A tile with an odd number of crossings can't pair them all and leaves a tail.</p>
-          <div className="chips">
-            {classes.map((c) => (
-              <button
-                type="button"
-                key={c}
-                className={`chip${selection.has(c) ? ' on' : ''}`}
-                style={{ ['--chip' as string]: classColor(c) }}
-                onClick={() => toggleClass(c)}
-                aria-pressed={selection.has(c)}
-              >
-                {className(ruleSet, c)}
-              </button>
-            ))}
-          </div>
-          <p className={`status ${isTailFree ? 'good' : 'bad'}`}>
-            {isTailFree ? 'Tail-free: every tile has an even number of crossings.' : `Odd crossings on ${circuits.oddTypes.join(', ')}.`}
-          </p>
-          {parity.basis.length > 0 && (
-            <>
-              <p className="hint">
-                Basis groups: tap one to flip all its edges together. Any mix of groups is tail-free, and each of the{' '}
-                {parity.count.toLocaleString()} tail-free selections is exactly one mix.
-              </p>
-              <div className="chips small">
-                {parity.basis.map((g, i) => {
-                  const label = g.map((c) => className(ruleSet, c)).join(ruleSet.classNames ? ',' : '·');
-                  const on = coords?.[i] ?? false;
-                  return (
-                    <button type="button" key={label} className={`chip plain${on ? ' on' : ''}`} onClick={() => toggleGroup(g)} aria-pressed={on}>
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-          <details open={parity.count <= 64}>
-            <summary>
-              {parity.count.toLocaleString()} tail-free selection{parity.count === 1 ? '' : 's'}
-              {parity.truncated ? ` (showing ${parity.selections.length})` : ''}
-            </summary>
-            <div className="chips small">
-              {parity.selections.map((s) => {
-                const key = s.map((c) => className(ruleSet, c)).join(ruleSet.classNames ? ',' : '') || '∅';
-                const on = s.length === selection.size && s.every((c) => selection.has(c));
-                return (
-                  <button type="button" key={key} className={`chip plain${on ? ' on' : ''}`} onClick={() => setSelection(new Set(s))}>
-                    {key}
-                  </button>
-                );
-              })}
-            </div>
-          </details>
-        </section>
-
-        <section>
-          <h2>Combination</h2>
-          <p className="hint">
-            Each tile joins its crossings in pairs without crossing itself. {totalCombos.toLocaleString()} combination{totalCombos === 1 ? '' : 's'} for this selection.
-          </p>
-          <div className="glyph-grid">
-            {tiling.prototiles.map((q) => {
-              const n = counts[q.id];
-              const choices = n > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(n);
-              return (
-                <div className="glyph-card" key={q.id}>
-                  <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={84} />
-                  <div className="glyph-name">{q.name}</div>
-                  {n % 2 === 1 ? (
-                    <div className="glyph-ctl bad">{n} · odd</div>
-                  ) : choices > 1 ? (
-                    <div className="glyph-ctl">
-                      <button type="button" onClick={() => stepCombo(q.id, -1)} aria-label={`Previous pairing for ${q.name}`}>
-                        ‹
-                      </button>
-                      <span>
-                        {((combo[q.id] ?? 0) % choices) + 1}/{choices}
-                      </span>
-                      <button type="button" onClick={() => stepCombo(q.id, 1)} aria-label={`Next pairing for ${q.name}`}>
-                        ›
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="glyph-ctl muted">{n === 0 ? 'no lines' : 'one way'}</div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="row">
-            <button type="button" onClick={randomCombo}>
-              Random
-            </button>
-            <button type="button" onClick={() => stepAll(1)} disabled={totalCombos <= 1}>
-              Next
-            </button>
-            <button type="button" onClick={() => setCombo({})}>
-              Reset
-            </button>
-          </div>
-          <label className="field">
-            <span>Share string</span>
-            <input
-              className="mono"
-              value={shareDraft ?? share}
-              onChange={(e) => setShareDraft(e.target.value)}
-              onBlur={() => shareDraft !== null && applyShare(shareDraft)}
-              onKeyDown={(e) => e.key === 'Enter' && applyShare((e.target as HTMLInputElement).value)}
-              spellCheck={false}
-            />
-          </label>
+          <h2>Share</h2>
           <button type="button" onClick={copyLink}>
             {copied ? 'Link copied' : 'Copy link to this view'}
           </button>
@@ -702,6 +590,16 @@ export function ExplorerPage({ route }: Props) {
               <b>{circuits.tails.toLocaleString()}</b> with tails
             </span>
           )}
+          <input
+            className="mono stats-share"
+            aria-label="Share string: the edges and pairing"
+            title="The edges and pairing: copy it, or paste one in"
+            value={shareDraft ?? share}
+            onChange={(e) => setShareDraft(e.target.value)}
+            onBlur={() => shareDraft !== null && applyShare(shareDraft)}
+            onKeyDown={(e) => e.key === 'Enter' && applyShare((e.target as HTMLInputElement).value)}
+            spellCheck={false}
+          />
           {statsOpen && (
             <span>
               <b>{circuits.chords.length.toLocaleString()}</b> segments
