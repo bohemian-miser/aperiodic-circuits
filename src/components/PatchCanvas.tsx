@@ -231,6 +231,9 @@ export function PatchCanvas(props: PatchCanvasProps) {
         ctx.stroke(b);
       }
     }
+    // A closed circuit's head is back at the start: a marker there would
+    // read as a gap in the loop.
+    if (chase.status === 'closed') return;
     const hd = chase.headPt;
     ctx.beginPath();
     ctx.arc(hd.x, hd.y, Math.max(lw * 2.4, 4 / v.scale), 0, 2 * Math.PI);
