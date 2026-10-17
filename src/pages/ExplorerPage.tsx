@@ -659,6 +659,8 @@ export function ExplorerPage({ route }: Props) {
             type={editing}
             index={combo[editing] ?? 0}
             onSetIndex={(i) => setCombo({ ...combo, [editing]: i })}
+            onToggleClass={toggleClass}
+            onStepTile={(d) => setEditing(types[(types.indexOf(editing) + d + types.length) % types.length])}
             onClose={() => setEditing(null)}
           />
         )}
@@ -859,12 +861,12 @@ function QuickControls(props: QuickProps) {
             const choices = n > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(n);
             const varies = n % 2 === 0 && choices > 1;
             const kind = n % 2 === 1 ? 'odd' : n === 0 ? 'empty' : varies ? 'varies' : 'lines';
-            // Big tiles open in the pairing editor; small ones just step their pairing.
-            const open = tileSize === 0 ? n > 0 : varies;
+            // Big tiles open in the editor (pairings and edges); small ones just step their pairing.
+            const open = tileSize === 0 || varies;
             const onClick = () => (tileSize === 0 ? onOpenTile(q.id) : onStepTile(q.id, 1));
             const body = (
               <>
-                <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={tileSize === 1 ? 34 : 56} />
+                <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={tileSize === 1 ? 34 : 56} showLabels={tileSize === 0} labelScale={2} />
                 <span className="quick-tile-name">{q.name}</span>
                 {(varies || n % 2 === 1) && (
                   <span className="quick-tile-ctl">{n % 2 === 1 ? 'odd' : `${((combo[q.id] ?? 0) % choices) + 1}/${choices}`}</span>
@@ -872,7 +874,7 @@ function QuickControls(props: QuickProps) {
               </>
             );
             return open ? (
-              <button type="button" className={`quick-tile ${kind}`} key={q.id} title={tileSize === 0 ? `${q.name}: tap to draw its pairing` : `${q.name}: tap for its next pairing`} onClick={onClick}>
+              <button type="button" className={`quick-tile ${kind}`} key={q.id} title={tileSize === 0 ? `${q.name}: tap to edit its edges and pairing` : `${q.name}: tap for its next pairing`} onClick={onClick}>
                 {body}
               </button>
             ) : (

@@ -1232,6 +1232,33 @@ button.quick-tile {
   z-index: 10;
 }
 
+/* Little arrows hugging the sheet's sides step to the neighbouring tiles. */
+.tile-editor-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  padding: 18px 4px;
+  border: none;
+  background: none;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.tile-editor-nav:hover {
+  color: var(--ink);
+  background: none;
+}
+
+.tile-editor-nav.prev {
+  left: 0;
+}
+
+.tile-editor-nav.next {
+  right: 0;
+}
+
 .tile-editor-head {
   display: flex;
   align-items: center;
