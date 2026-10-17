@@ -76,8 +76,6 @@ export function ExplorerPage({ route }: Props) {
   // The picked line is remembered by a point on it, so it survives the patch
   // being regrown (infinite mode regrows on every pan).
   const [pickedAt, setPickedAt] = useState<readonly string[] | null>(null);
-  // Which layout of the quick controls to show (a: strip above the field, b: floating on it, c: dock below it).
-  const [ui] = useState(() => (['a', 'b', 'c'].includes(p.get('ui') ?? '') ? p.get('ui')! : 'a'));
   const [infiniteOn, setInfiniteOn] = useState(() => p.get('inf') === '1');
   const [seed, setSeed] = useState(() => Math.max(1, Number(p.get('seed')) || 1));
   const [viewRect, setViewRect] = useState<Rect>(INITIAL_VIEW);
@@ -211,10 +209,10 @@ export function ExplorerPage({ route }: Props) {
 
   // Keep the URL in step (without spamming history).
   useEffect(() => {
-    const params: Record<string, string | number | undefined> = { t: tiling.id, rs: ruleSet.id, lv: level, root, s: share, inf: infinite ? 1 : undefined, seed: infinite && seed !== 1 ? seed : undefined, ui: ui !== 'a' ? ui : undefined };
+    const params: Record<string, string | number | undefined> = { t: tiling.id, rs: ruleSet.id, lv: level, root, s: share, inf: infinite ? 1 : undefined, seed: infinite && seed !== 1 ? seed : undefined };
     if (embedded && embedded.id === ruleSet.id) params.rsd = p.get('rsd') ?? undefined;
     replaceHash(hashFor('explore', params));
-  }, [tiling.id, ruleSet.id, level, root, share, embedded, p, infinite, seed, ui]);
+  }, [tiling.id, ruleSet.id, level, root, share, embedded, p, infinite, seed]);
 
   const toggleClass = (c: number) => {
     const next = new Set(selection);
@@ -267,7 +265,7 @@ export function ExplorerPage({ route }: Props) {
   };
   const quick = (
     <QuickControls
-      className={`quick quick-${ui}`}
+      className="quick"
       tiling={tiling}
       ruleSet={ruleSet}
       classes={classes}
@@ -646,9 +644,8 @@ export function ExplorerPage({ route }: Props) {
         <Survey tiling={tiling} ruleSet={ruleSet} selection={selection} counts={counts} onPick={setCombo} />
       </aside>
 
-      <main className={`stage ui-${ui}`}>
+      <main className="stage">
         <div className="stage-top" ref={topRef}>
-          {ui !== 'c' && quick}
           <p className="stage-hint">
             Drag to pan, scroll or pinch to zoom, click a line to {infinite && chaseOn ? 'chase it' : 'pick it out'}.
           </p>
@@ -690,7 +687,7 @@ export function ExplorerPage({ route }: Props) {
           morphKey={morphKey}
         />
         <div className="stage-bottom" ref={bottomRef}>
-        {ui === 'c' && quick}
+        {quick}
         <div className="stats">
           <span>
             <b>{circuits.circuits.toLocaleString()}</b> circuits
