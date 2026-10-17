@@ -142,6 +142,8 @@ export function ExplorerPage({ route }: Props) {
     () => computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }),
     [tiling, ruleSet, instances, selection, combo, adjacency],
   );
+  // Same tiles and crossings, so a new pairing animates on the canvas.
+  const morphKey = useMemo(() => ({}), [tiling, ruleSet, instances, selection]);
   useEffect(() => setPickedAt(null), [tiling, ruleSet, root, seed, infinite]);
   useEffect(() => setEditing(null), [tiling, ruleSet]);
   // A chase belongs to one plane and one set of lines.
@@ -411,7 +413,7 @@ export function ExplorerPage({ route }: Props) {
                 </button>
               </div>
               <div className="checks">
-                <label title="Click a line and the camera chases it across the plane. Dragging takes the camera back until you let go; scroll-zoom stays yours.">
+                <label title="Click a line and the camera chases it across the plane. Dragging takes the camera back until you let go, and for good once the line has closed or hit a tail; scroll-zoom stays yours.">
                   <input type="checkbox" checked={chaseOn} onChange={(e) => setChaseOn(e.target.checked)} /> Chase the picked line
                 </label>
                 <label title="Walk the line as fast as the camera can follow">
@@ -674,6 +676,7 @@ export function ExplorerPage({ route }: Props) {
           onViewChange={infinite ? onViewChange : undefined}
           zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
           selectedRainbow={infinite}
+          morphKey={morphKey}
         />
         {ui === 'c' && quick}
         <div className="stats">

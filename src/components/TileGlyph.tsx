@@ -1,5 +1,7 @@
-import { localChords } from '../core/circuits';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { localChords, type LocalChord } from '../core/circuits';
 import { lerpPt, type Pt } from '../core/geom';
+import { halfAt, MORPH_MS, morphChords, morphProgress, prefersReducedMotion, type ChordMorph } from '../core/morph';
 import { polygonCentroid } from '../core/polygon';
 import { className, edgeSeamIndex, seamCenter, type RuleSet } from '../core/ruleset';
 import { prototile, type Tiling } from '../core/tiling';
@@ -44,7 +46,8 @@ export function TileGlyph(props: TileGlyphProps) {
   const seams = ruleSet.seams[type] ?? [];
   const soe = edgeSeamIndex(ruleSet, type, n);
   const ctr = polygonCentroid(pts);
-  const chords = selection ? localChords(tiling, ruleSet, type, selection, comboIndex) : null;
+  const chords = useMemo(() => (selection ? localChords(tiling, ruleSet, type, selection, comboIndex) : null), [tiling, ruleSet, type, selection, comboIndex]);
+  const morph = useChordMorph(chords?.chords ?? null, [tiling, ruleSet, type, selection]);
   const interactive = !!onEdgeClick;
 
   return (
@@ -95,9 +98,13 @@ export function TileGlyph(props: TileGlyphProps) {
           </g>
         );
       })}
-      {chords?.chords.map((c, i) => (
+      {(morph ? morph.m.still.map((i) => chords!.chords[i]) : chords?.chords)?.map((c, i) => (
         <path key={i} d={`M${c.a.x},${c.a.y} Q${c.c.x},${c.c.y} ${c.b.x},${c.b.y}`} fill="none" stroke="var(--ink)" strokeWidth={sw * 1.3} strokeLinecap="round" />
       ))}
+      {morph?.m.moving.map((h, i) => {
+        const { e, q, m } = halfAt(h, morph.u);
+        return <path key={`h${i}`} d={`M${e.x},${e.y} Q${q.x},${q.y} ${m.x},${m.y}`} fill="none" stroke="var(--ink)" strokeWidth={sw * 1.3} strokeLinecap="round" />;
+      })}
       {seams.map((s, i) => {
         if (selection && !selection.has(s.cls)) return null;
         const p = seamCenter(pts, s);
@@ -125,4 +132,37 @@ export function TileGlyph(props: TileGlyphProps) {
         })}
     </svg>
   );
+}
+
+/**
+ * When the chords change but nothing else in `deps` does (a new pairing),
+ * the morph from the old chords to the new and how far along it is.
+ */
+function useChordMorph(chords: readonly LocalChord[] | null, deps: readonly unknown[]): { m: ChordMorph; u: number } | null {
+  const [anim, setAnim] = useState<{ m: ChordMorph; u: number } | null>(null);
+  const prev = useRef<{ chords: readonly LocalChord[] | null; deps: readonly unknown[] } | null>(null);
+  const raf = useRef(0);
+  useLayoutEffect(() => {
+    const p = prev.current;
+    prev.current = { chords, deps };
+    cancelAnimationFrame(raf.current);
+    setAnim(null);
+    if (!p?.chords || !chords || p.chords === chords || p.deps.some((d, i) => d !== deps[i]) || prefersReducedMotion()) return;
+    const m = morphChords(p.chords, chords);
+    if (!m || m.moving.length === 0) return;
+    const start = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      if (now - start >= MORPH_MS) {
+        setAnim(null);
+        return;
+      }
+      setAnim({ m, u: morphProgress(start, now) });
+      raf.current = requestAnimationFrame(tick);
+    };
+    setAnim({ m, u: 0 });
+    raf.current = requestAnimationFrame(tick);
+  }, [chords]);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  return anim;
 }
