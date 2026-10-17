@@ -87,6 +87,9 @@ export function ExplorerPage({ route }: Props) {
     setViewRect(r);
     setGrownRect((g) => (covers(g, r) && area(g) < 4 * area(r) ? g : withMargin(r)));
   }, []);
+  // The tile pictures in the quick controls: 0 big, 1 small, 2 hidden.
+  const [tileSize, setTileSize] = useStoredNumber('quick-tiles', 0, (n) => n === 0 || n === 1 || n === 2);
+  const [statsOpen, setStatsOpen] = useStoredFlag('stats-open', false);
   const [showBackground, setShowBackground] = useStoredFlag('background', true);
   const [showTiles, setShowTiles] = useStoredFlag('tile-colours', true);
   const [rainbowLines, setRainbowLines] = useStoredFlag('rainbow-lines', true);
@@ -263,6 +266,8 @@ export function ExplorerPage({ route }: Props) {
       counts={counts}
       combo={combo}
       onStepTile={stepCombo}
+      tileSize={tileSize}
+      onTileSize={setTileSize}
       index={comboIndex}
       total={totalCombos}
       onRandom={randomCombo}
@@ -653,15 +658,19 @@ export function ExplorerPage({ route }: Props) {
             <b>{circuits.circuits.toLocaleString()}</b> circuits
           </span>
           <span>
-            <b>{circuits.openLines.toLocaleString()}</b> open lines
+            <b>{circuits.openLines.toLocaleString()}</b> open
           </span>
-          <span className={circuits.tails ? 'bad' : ''}>
-            <b>{circuits.tails.toLocaleString()}</b> with tails
-          </span>
-          <span>
-            <b>{circuits.chords.length.toLocaleString()}</b> segments
-          </span>
-          {lengths.length > 0 && (
+          {circuits.tails > 0 && (
+            <span className="bad">
+              <b>{circuits.tails.toLocaleString()}</b> with tails
+            </span>
+          )}
+          {statsOpen && (
+            <span>
+              <b>{circuits.chords.length.toLocaleString()}</b> segments
+            </span>
+          )}
+          {statsOpen && lengths.length > 0 && (
             <span className="lengths">
               {lengths.slice(0, 14).map(([len, k]) => {
                 const pi = circuits.paths.findIndex((q) => q.closed && q.chords.length === len);
@@ -681,6 +690,9 @@ export function ExplorerPage({ route }: Props) {
               {infinite && !sel.closed ? ' so far' : ''}
             </span>
           )}
+          <button type="button" className="stats-more" onClick={() => setStatsOpen(!statsOpen)} aria-expanded={statsOpen}>
+            {statsOpen ? 'Less ▴' : 'More ▾'}
+          </button>
         </div>
         <p className="stage-hint">
           Drag to pan, scroll or pinch to zoom, click a line to {infinite && chaseOn ? 'chase it' : 'pick it out'}.
@@ -720,6 +732,8 @@ function describeChase(c: { steps: number; status: ChaseStatus }): string {
   return c.status === 'closed' ? `Chased a closed circuit: ${n} tiles round` : c.status === 'tail' ? `Chase ended in a tail after ${n} tiles` : `Chasing… ${n} tiles`;
 }
 
+const TILE_SIZE_NAMES = ['big', 'small', 'off'];
+
 interface QuickProps {
   readonly className: string;
   readonly tiling: Tiling;
@@ -732,6 +746,8 @@ interface QuickProps {
   readonly counts: Record<string, number>;
   readonly combo: Record<string, number>;
   readonly onStepTile: (type: string, d: number) => void;
+  readonly tileSize: number;
+  readonly onTileSize: (n: number) => void;
   readonly index: number;
   readonly total: number;
   readonly onRandom: () => void;
@@ -743,7 +759,7 @@ interface QuickProps {
  * of the picked edges, kept by the field so you can watch it change.
  */
 function QuickControls(props: QuickProps) {
-  const { className: cls, tiling, ruleSet, classes, selection, onToggle, tailFree, oddTypes, counts, combo, onStepTile, index, total, onRandom, onStep } = props;
+  const { className: cls, tiling, ruleSet, classes, selection, onToggle, tailFree, oddTypes, counts, combo, onStepTile, tileSize, onTileSize, index, total, onRandom, onStep } = props;
   return (
     <div className={cls}>
       <div className="quick-edges">
@@ -761,35 +777,43 @@ function QuickControls(props: QuickProps) {
             {className(ruleSet, c)}
           </button>
         ))}
+        <button
+          type="button"
+          className="quick-size"
+          onClick={() => onTileSize((tileSize + 1) % 3)}
+          title={`Tile pictures: ${TILE_SIZE_NAMES[tileSize]} (tap for ${TILE_SIZE_NAMES[(tileSize + 1) % 3]})`}
+          aria-label={`Tile pictures: ${TILE_SIZE_NAMES[tileSize]}`}
+        >
+          <span className="long">Tiles: {TILE_SIZE_NAMES[tileSize]}</span>
+          <span className="short">⬡{['L', 'S', '–'][tileSize]}</span>
+        </button>
       </div>
-      <div className="quick-tiles">
-        {tiling.prototiles.map((q) => {
-          const n = counts[q.id];
-          const choices = n > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(n);
-          return (
-            <div className="quick-tile" key={q.id} title={q.name}>
-              <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={48} />
-              {n % 2 === 1 ? (
-                <div className="quick-tile-ctl bad">odd</div>
-              ) : choices > 1 ? (
-                <div className="quick-tile-ctl">
-                  <button type="button" onClick={() => onStepTile(q.id, -1)} aria-label={`Previous pairing for ${q.name}`}>
-                    ‹
-                  </button>
-                  <span>
+      {tileSize < 2 && (
+        <div className={`quick-tiles${tileSize === 1 ? ' small' : ''}`}>
+          {tiling.prototiles.map((q) => {
+            const n = counts[q.id];
+            const choices = n > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(n);
+            const glyph = <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={tileSize === 1 ? 30 : 48} />;
+            // Tiles keep their places; the ones with a choice stand out and step when tapped.
+            if (n % 2 === 0 && choices > 1) {
+              return (
+                <button type="button" className="quick-tile varies" key={q.id} title={`${q.name}: tap for its next pairing`} onClick={() => onStepTile(q.id, 1)}>
+                  {glyph}
+                  <span className="quick-tile-ctl">
                     {((combo[q.id] ?? 0) % choices) + 1}/{choices}
                   </span>
-                  <button type="button" onClick={() => onStepTile(q.id, 1)} aria-label={`Next pairing for ${q.name}`}>
-                    ›
-                  </button>
-                </div>
-              ) : (
-                <div className="quick-tile-ctl muted">{n === 0 ? 'none' : 'fixed'}</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                </button>
+              );
+            }
+            return (
+              <div className={`quick-tile ${n % 2 === 1 ? 'odd' : 'fixed'}`} key={q.id} title={n % 2 === 1 ? `${q.name}: odd crossings` : `${q.name}: one way`}>
+                {glyph}
+                <span className="quick-tile-ctl">{n % 2 === 1 ? 'odd' : '\u00a0'}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div className="quick-combo">
         <button type="button" onClick={() => onStep(-1)} disabled={total <= 1} aria-label="Previous pairing">
           ‹

@@ -437,6 +437,13 @@ details summary {
   font-variant-numeric: tabular-nums;
 }
 
+.stats-more {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .stats .lengths {
   display: flex;
   flex-wrap: wrap;
@@ -1042,6 +1049,11 @@ h3.sub {
   gap: 5px;
 }
 
+.quick-tiles.small {
+  grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+  gap: 3px;
+}
+
 .quick-tile {
   display: flex;
   flex-direction: column;
@@ -1050,20 +1062,54 @@ h3.sub {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg);
+  font: inherit;
+  color: inherit;
+}
+
+.quick-tile.fixed {
+  opacity: 0.4;
+}
+
+.quick-tile.varies {
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  cursor: pointer;
+}
+
+.quick-tile.odd {
+  border-color: var(--danger);
 }
 
 .quick-tile-ctl {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 20px;
   font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.quick-tile-ctl button {
-  padding: 0 5px;
-  line-height: 18px;
+.quick-tile.odd .quick-tile-ctl {
+  color: var(--danger);
+}
+
+.quick-tiles.small .quick-tile {
+  padding: 1px;
+}
+
+.quick-tiles.small .quick-tile-ctl {
+  font-size: 9.5px;
+  line-height: 12px;
+}
+
+.quick-size .short {
+  display: none;
+}
+
+.quick-size {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .quick-combo {
@@ -1150,5 +1196,36 @@ h3.sub {
 @media (min-width: 821px) {
   .quick-combo button {
     flex: 0 1 160px;
+  }
+}
+
+@media (max-width: 820px) {
+  /* The field and its controls fill the screen; the settings are a scroll away. */
+  .topbar {
+    height: 46px;
+  }
+
+  .stage {
+    height: calc(100dvh - 46px);
+  }
+
+  .stats {
+    gap: 4px 12px;
+    padding: 6px 12px;
+  }
+}
+
+@media (max-width: 820px) {
+  .quick .quick-label,
+  .quick-size .long {
+    display: none;
+  }
+
+  .quick-size .short {
+    display: inline;
+  }
+
+  .quick-size {
+    padding: 2px 6px;
   }
 }
