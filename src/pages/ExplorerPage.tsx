@@ -9,7 +9,7 @@ import { InfinitePlane, meanTileArea, supportsInfinite, type Rect } from '../cor
 import { qkey } from '../core/polygon';
 import { StrandChase, type ChaseStatus } from '../core/chase';
 import type { Tiling } from '../core/tiling';
-import { PatchCanvas, pathColors } from '../components/PatchCanvas';
+import { PatchCanvas, TRAIL_RAINBOW_PERIOD, pathColors } from '../components/PatchCanvas';
 import { TileEditor } from '../components/TileEditor';
 import { TileGlyph } from '../components/TileGlyph';
 import { classColor } from '../colors';
@@ -109,6 +109,9 @@ export function ExplorerPage({ route }: Props) {
   const [pace, setPace] = useStoredNumber('chase-pace', 24, (n) => n >= 1 && n <= 240);
   const [damping, setDamping] = useStoredNumber('chase-damping', 1, (n) => n >= MIN_DAMPING && n <= MAX_DAMPING);
   const [hold, setHold] = useStoredNumber('chase-hold', 0, (n) => n >= 0 && Number.isInteger(n));
+  // The traced line's rainbow: cycling every few hundred tiles, or one
+  // gradient stretched over the whole line (the Spectre map's way).
+  const [stretchRainbow, setStretchRainbow] = useStoredFlag('trail-rainbow-stretch', false);
   const [chase, setChase] = useState<StrandChase | null>(null);
   const [chaseInfo, setChaseInfo] = useState<{ steps: number; status: ChaseStatus } | null>(null);
 
@@ -423,6 +426,27 @@ export function ExplorerPage({ route }: Props) {
                   <input type="checkbox" checked={fullSpeed} disabled={!chaseOn} onChange={(e) => setFullSpeed(e.target.checked)} /> Full speed
                 </label>
               </div>
+              <div className="row" role="group" aria-label="Rainbow of the traced line">
+                <span className="hint">Rainbow</span>
+                <button
+                  type="button"
+                  className={!stretchRainbow ? 'on' : ''}
+                  onClick={() => setStretchRainbow(false)}
+                  aria-pressed={!stretchRainbow}
+                  title={`Red to violet and back every ${TRAIL_RAINBOW_PERIOD} tiles, so nearby stretches of the line tell apart`}
+                >
+                  Repeating
+                </button>
+                <button
+                  type="button"
+                  className={stretchRainbow ? 'on' : ''}
+                  onClick={() => setStretchRainbow(true)}
+                  aria-pressed={stretchRainbow}
+                  title="One gradient over the whole line, red at the start to violet at the head, restretching as it grows (as on the Spectre map)"
+                >
+                  Whole line
+                </button>
+              </div>
               {chaseOn && (
                 <>
                   {!fullSpeed && (
@@ -685,6 +709,7 @@ export function ExplorerPage({ route }: Props) {
           onViewChange={infinite ? onViewChange : undefined}
           zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
           selectedRainbow={infinite}
+          trailRainbow={stretchRainbow ? 'stretch' : 'repeat'}
           insets={topHeight === null || bottomHeight === null ? undefined : { top: topHeight, bottom: bottomHeight }}
           morphKey={morphKey}
         />
