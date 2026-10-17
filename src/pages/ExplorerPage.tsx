@@ -660,6 +660,7 @@ export function ExplorerPage({ route }: Props) {
             index={combo[editing] ?? 0}
             onSetIndex={(i) => setCombo({ ...combo, [editing]: i })}
             onToggleClass={toggleClass}
+            onStepTile={(d) => setEditing(types[(types.indexOf(editing) + d + types.length) % types.length])}
             onClose={() => setEditing(null)}
           />
         )}

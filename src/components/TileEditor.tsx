@@ -15,6 +15,8 @@ interface Props {
   readonly onSetIndex: (index: number) => void;
   /** Tapping an edge turns its class on or off. */
   readonly onToggleClass: (cls: number) => void;
+  /** Move to the previous (-1) or next (+1) tile. */
+  readonly onStepTile: (d: number) => void;
   readonly onClose: () => void;
 }
 
@@ -24,7 +26,7 @@ interface Props {
  * tapping) pairs it with the last one, keeping as much of the old pairing as
  * fits. Tapping an edge away from its crossing turns its class on or off.
  */
-export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex, onToggleClass, onClose }: Props) {
+export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex, onToggleClass, onStepTile, onClose }: Props) {
   const proto = prototile(tiling, type);
   const { viewBox, span } = glyphFrame(proto.pts);
   const { points, odd } = localChords(tiling, ruleSet, type, selection, index);
@@ -176,6 +178,12 @@ export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex
           ×
         </button>
       </div>
+      <button type="button" className="tile-editor-nav prev" onClick={() => onStepTile(-1)} aria-label="Previous tile">
+        ‹
+      </button>
+      <button type="button" className="tile-editor-nav next" onClick={() => onStepTile(1)} aria-label="Next tile">
+        ›
+      </button>
       <div className="tile-editor-stage">
         <TileGlyph tiling={tiling} type={type} ruleSet={ruleSet} selection={selection} comboIndex={index} size={260} showLabels labelInset={0.3} />
         <svg ref={svg} className="tile-editor-touch" viewBox={viewBox} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
