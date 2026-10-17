@@ -46,6 +46,12 @@ export interface PatchCanvasProps {
    * each crossing's line swings over from its old partner to its new one.
    */
   readonly morphKey?: unknown;
+  /**
+   * Screen pixels covered by panels floating over the top and bottom of the
+   * canvas: fitting centres the patch in what's left, and the zoom buttons
+   * sit below the top one. Changing them never moves the view.
+   */
+  readonly insets?: { readonly top: number; readonly bottom: number };
 }
 
 /** The chase trail's rainbow runs red to violet and back every this many tiles. */
@@ -530,13 +536,17 @@ export function PatchCanvas(props: PatchCanvasProps) {
 
   const fitBoundsRef = useRef(props.fitBounds);
   fitBoundsRef.current = props.fitBounds;
+  const insetsRef = useRef(props.insets);
+  insetsRef.current = props.insets;
   const fit = useCallback(() => {
-    const { w, h } = size.current;
+    const { w } = size.current;
+    const top = insetsRef.current?.top ?? 0;
+    const h = Math.max(1, size.current.h - top - (insetsRef.current?.bottom ?? 0));
     const b = fitBoundsRef.current ?? geo.bounds;
     const bw = Math.max(1e-6, b.maxX - b.minX);
     const bh = Math.max(1e-6, b.maxY - b.minY);
     const scale = Math.max(minScaleRef.current(), 0.94 * Math.min(w / bw, h / bh));
-    view.current = { scale, tx: w / 2 - scale * (b.minX + bw / 2), ty: h / 2 - scale * (b.minY + bh / 2) };
+    view.current = { scale, tx: w / 2 - scale * (b.minX + bw / 2), ty: top + h / 2 - scale * (b.minY + bh / 2) };
     schedule();
   }, [geo, schedule]);
 
@@ -568,6 +578,11 @@ export function PatchCanvas(props: PatchCanvasProps) {
   useEffect(() => {
     if (size.current.w > 1) fitRef.current();
   }, [fitKey]);
+  // The panels are measured just after the canvas: fit again once they are.
+  const hasInsets = props.insets !== undefined;
+  useEffect(() => {
+    if (hasInsets && size.current.w > 1) fitRef.current();
+  }, [hasInsets]);
   useEffect(() => {
     schedule();
   }, [schedule]);
@@ -746,7 +761,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
   return (
     <div className="patch-canvas" ref={wrapRef}>
       <canvas ref={canvasRef} aria-label={`${tiling.name} patch`} />
-      <div className="canvas-tools">
+      <div className="canvas-tools" style={props.insets ? { top: props.insets.top + 10 } : undefined}>
         <button type="button" onClick={() => zoomBy(view, size.current, 1.4, schedule)} aria-label="Zoom in">+</button>
         <button type="button" onClick={() => zoomBy(view, size.current, 1 / 1.4, schedule, minScaleRef.current())} aria-label="Zoom out">−</button>
         <button type="button" onClick={fit} aria-label="Fit to view">Fit</button>

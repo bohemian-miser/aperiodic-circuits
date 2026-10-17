@@ -94,6 +94,11 @@ export function ExplorerPage({ route }: Props) {
   const [basisOpen, setBasisOpen] = useStoredFlag('quick-basis', false);
   // The tile magnified for drawing its pairing.
   const [editing, setEditing] = useState<string | null>(null);
+  // The panels float over the field so it never moves when they change size.
+  const topRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const topHeight = useHeight(topRef);
+  const bottomHeight = useHeight(bottomRef);
   const [showBackground, setShowBackground] = useStoredFlag('background', true);
   const [showTiles, setShowTiles] = useStoredFlag('tile-colours', true);
   const [rainbowLines, setRainbowLines] = useStoredFlag('rainbow-lines', true);
@@ -642,7 +647,12 @@ export function ExplorerPage({ route }: Props) {
       </aside>
 
       <main className={`stage ui-${ui}`}>
-        {ui !== 'c' && quick}
+        <div className="stage-top" ref={topRef}>
+          {ui !== 'c' && quick}
+          <p className="stage-hint">
+            Drag to pan, scroll or pinch to zoom, click a line to {infinite && chaseOn ? 'chase it' : 'pick it out'}.
+          </p>
+        </div>
         {editing && (
           <TileEditor
             key={editing}
@@ -676,8 +686,10 @@ export function ExplorerPage({ route }: Props) {
           onViewChange={infinite ? onViewChange : undefined}
           zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
           selectedRainbow={infinite}
+          insets={topHeight === null || bottomHeight === null ? undefined : { top: topHeight, bottom: bottomHeight }}
           morphKey={morphKey}
         />
+        <div className="stage-bottom" ref={bottomRef}>
         {ui === 'c' && quick}
         <div className="stats">
           <span>
@@ -720,9 +732,7 @@ export function ExplorerPage({ route }: Props) {
             {statsOpen ? 'Less ▴' : 'More ▾'}
           </button>
         </div>
-        <p className="stage-hint">
-          Drag to pan, scroll or pinch to zoom, click a line to {infinite && chaseOn ? 'chase it' : 'pick it out'}.
-        </p>
+        </div>
       </main>
     </div>
   );
@@ -1025,6 +1035,19 @@ function Survey({ tiling, ruleSet, selection, counts, onPick }: SurveyProps) {
       )}
     </section>
   );
+}
+
+/** An element's height, kept up to date as it changes. */
+function useHeight(ref: React.RefObject<HTMLElement | null>): number | null {
+  const [h, setH] = useState<number | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setH(el.getBoundingClientRect().height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return h;
 }
 
 /** A numeric setting, remembered in this browser if it passes `ok`. */
