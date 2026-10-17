@@ -848,7 +848,7 @@ function QuickControls(props: QuickProps) {
             const n = counts[q.id];
             const choices = n > MAX_ENUMERATED_CROSSINGS ? 1 : choiceCount(n);
             const varies = n % 2 === 0 && choices > 1;
-            const kind = n % 2 === 1 ? 'odd' : n === 0 ? 'empty' : varies ? 'varies' : '';
+            const kind = n % 2 === 1 ? 'odd' : n === 0 ? 'empty' : varies ? 'varies' : 'lines';
             // Big tiles open in the pairing editor; small ones just step their pairing.
             const open = tileSize === 0 ? n > 0 : varies;
             const onClick = () => (tileSize === 0 ? onOpenTile(q.id) : onStepTile(q.id, 1));
