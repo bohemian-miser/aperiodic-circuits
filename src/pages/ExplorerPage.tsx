@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { computeCircuits, type CircuitResult } from '../core/circuits';
+import { computeCircuits, layChords, type CircuitResult } from '../core/circuits';
 import { choiceCount, MAX_ENUMERATED_CROSSINGS } from '../core/matchings';
 import { analyzeParity, basisCoords, crossingCounts } from '../core/parity';
 import { className, computeAdjacency, ruleSetClasses, type RuleSet } from '../core/ruleset';
@@ -103,6 +103,8 @@ export function ExplorerPage({ route }: Props) {
   const [showClassEdges, setShowClassEdges] = useState(false);
   const [lineWidth, setLineWidth] = useState(1);
   const [screenTiles, setScreenTiles] = useStoredNumber('infinite-screen-tiles', INFINITE_SCREEN_TILES, (n) => SCREEN_TILE_OPTIONS.includes(n));
+  // Past this many tiles infinite mode draws the lines without following them.
+  const [traceLimit, setTraceLimit] = useStoredNumber('infinite-trace-limit', TRACE_LIMIT, (n) => TRACE_LIMIT_OPTIONS.includes(n));
   // Chasing a picked line (infinite mode), as on the Spectre project's map.
   const [chaseOn, setChaseOn] = useStoredFlag('chase', true);
   const [fullSpeed, setFullSpeed] = useStoredFlag('chase-full-speed', true);
@@ -143,9 +145,14 @@ export function ExplorerPage({ route }: Props) {
     if (!plane) return tiling.generate(level, root);
     return plane.query(grownRect, Math.ceil(screenTiles * INFINITE_QUERY_FACTOR)).instances;
   }, [plane, tiling, level, root, grownRect, screenTiles]);
-  const adjacency = useMemo(() => computeAdjacency(tiling, instances), [tiling, instances]);
+  // Matching the tiles up and following every line is most of what a regrow
+  // costs, so a big infinite view only lays the chords, as the Spectre map
+  // does past its circuit ceiling: the lines show, uncoloured, and a click
+  // still chases one.
+  const trace = !infinite || instances.length <= traceLimit;
+  const adjacency = useMemo(() => (trace ? computeAdjacency(tiling, instances) : null), [trace, tiling, instances]);
   const circuits: CircuitResult = useMemo(
-    () => computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }),
+    () => (adjacency ? computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }) : layChords({ tiling, ruleSet, instances, selection, combo })),
     [tiling, ruleSet, instances, selection, combo, adjacency],
   );
   // Same tiles and crossings, so a new pairing animates on the canvas.
@@ -166,7 +173,7 @@ export function ExplorerPage({ route }: Props) {
     const want = new Set(pickedAt);
     for (let i = 0; i < circuits.chords.length; i++) {
       const ch = circuits.chords[i];
-      if (want.has(qkey(ch.a, 1e3)) || want.has(qkey(ch.b, 1e3))) return circuits.pathOfChord[i];
+      if (want.has(qkey(ch.a, 1e3)) || want.has(qkey(ch.b, 1e3))) return circuits.pathOfChord[i] >= 0 ? circuits.pathOfChord[i] : null;
     }
     return null;
   }, [pickedAt, circuits]);
@@ -505,6 +512,19 @@ export function ExplorerPage({ route }: Props) {
                     ))}
                   </select>
                 </label>
+                <label
+                  className="field"
+                  title="Up to this many tiles in view, every line is followed and circuits are coloured by length. Past it the lines are still drawn, in one colour, and a click still chases one; panning is much quicker."
+                >
+                  <span>Colour circuits up to</span>
+                  <select value={traceLimit} onChange={(e) => setTraceLimit(Number(e.target.value))}>
+                    {TRACE_LIMIT_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n === TRACE_LIMIT_OPTIONS[TRACE_LIMIT_OPTIONS.length - 1] ? 'always (slow)' : `${n.toLocaleString()} tiles in view${n === TRACE_LIMIT ? ' (default)' : n > TRACE_LIMIT ? ' (slow)' : ''}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </details>
             </>
           ) : (
@@ -716,12 +736,20 @@ export function ExplorerPage({ route }: Props) {
         <div className="stage-bottom" ref={bottomRef}>
         {quick}
         <div className="stats">
-          <span>
-            <b>{circuits.circuits.toLocaleString()}</b> circuits
-          </span>
-          <span>
-            <b>{circuits.openLines.toLocaleString()}</b> open
-          </span>
+          {circuits.untraced ? (
+            <span className="hint" title="Zoom in, or raise “Colour circuits up to” under Infinite › Advanced">
+              Circuits not coloured: {instances.length.toLocaleString()} tiles in view, over the {traceLimit.toLocaleString()} limit
+            </span>
+          ) : (
+            <>
+              <span>
+                <b>{circuits.circuits.toLocaleString()}</b> circuits
+              </span>
+              <span>
+                <b>{circuits.openLines.toLocaleString()}</b> open
+              </span>
+            </>
+          )}
           {circuits.tails > 0 && (
             <span className="bad">
               <b>{circuits.tails.toLocaleString()}</b> with tails
@@ -767,6 +795,10 @@ const INITIAL_VIEW: Rect = { minX: -16, minY: -16, maxX: 16, maxY: 16 };
 /** By default zoom-out stops at about this many tiles on screen (Advanced can change it)… */
 const INFINITE_SCREEN_TILES = 50_000;
 const SCREEN_TILE_OPTIONS = [10_000, 25_000, 50_000, 100_000, 200_000];
+/** Infinite mode follows every line and colours circuits up to this many tiles (Advanced can change it). */
+const TRACE_LIMIT = 10_000;
+// The last is past any query's size (200k on screen × 1.75): always.
+const TRACE_LIMIT_OPTIONS = [2_000, 5_000, 10_000, 25_000, 50_000, 350_000];
 /** …and a query returns at most this multiple of it (the screen plus a 15% margin each side). */
 const INFINITE_QUERY_FACTOR = 1.75;
 const MIN_DAMPING = 0.25;
