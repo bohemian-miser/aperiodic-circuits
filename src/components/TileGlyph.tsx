@@ -19,6 +19,10 @@ export interface TileGlyphProps {
   readonly onEdgeClick?: (edge: number) => void;
   readonly onVertexClick?: (vertex: number) => void;
   readonly showLabels?: boolean;
+  /** Edge labels at this many times their usual size (small glyphs want bigger ones). */
+  readonly labelScale?: number;
+  /** How far in from its edge a label sits, as a fraction of the way to the centre. */
+  readonly labelInset?: number;
   /** Seam indices to flag (validation conflicts). */
   readonly flagged?: ReadonlySet<number>;
 }
@@ -37,7 +41,7 @@ export function glyphFrame(pts: readonly Pt[]): { viewBox: string; span: number 
 }
 
 export function TileGlyph(props: TileGlyphProps) {
-  const { tiling, type, ruleSet, selection, comboIndex = 0, size = 120, onEdgeClick, onVertexClick, showLabels, flagged } = props;
+  const { tiling, type, ruleSet, selection, comboIndex = 0, size = 120, onEdgeClick, onVertexClick, showLabels, labelScale = 1, labelInset = 0.18, flagged } = props;
   const proto = prototile(tiling, type);
   const pts = proto.pts;
   const n = pts.length;
@@ -67,7 +71,7 @@ export function TileGlyph(props: TileGlyphProps) {
               x2={b.x}
               y2={b.y}
               stroke={cls === null ? 'var(--muted)' : classColor(cls)}
-              strokeOpacity={lit ? 1 : selection ? 0.25 : 0.9}
+              strokeOpacity={lit ? 1 : selection ? 0.4 : 0.9}
               strokeWidth={cls === null ? sw * 0.6 : sw * 1.6}
               strokeDasharray={cls === null || hidden ? `${sw * 1.5} ${sw * 1.5}` : undefined}
               strokeLinecap="round"
@@ -88,9 +92,22 @@ export function TileGlyph(props: TileGlyphProps) {
               </line>
             )}
             {showLabels && cls !== null && (() => {
-              const m = lerpPt(lerpPt(a, b, 0.5), ctr, 0.18);
+              const m = lerpPt(lerpPt(a, b, 0.5), ctr, labelInset);
               return (
-                <text x={m.x} y={m.y} fontSize={sw * 4.2} textAnchor="middle" dominantBaseline="central" fill={classColor(cls)} className="edge-label">
+                <text
+                  x={m.x}
+                  y={m.y}
+                  fontSize={sw * 4.2 * labelScale}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fill={classColor(cls)}
+                  fillOpacity={lit ? 1 : 0.6}
+                  stroke="var(--panel)"
+                  strokeWidth={sw * 0.9 * labelScale}
+                  strokeOpacity={0.75}
+                  paintOrder="stroke"
+                  className="edge-label"
+                >
                   {className(ruleSet, cls)}
                 </text>
               );

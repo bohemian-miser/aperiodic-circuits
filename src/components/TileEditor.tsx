@@ -2,7 +2,7 @@ import { useRef, useState, type PointerEvent } from 'react';
 import { localChords } from '../core/circuits';
 import { dist, type Pt } from '../core/geom';
 import { nonCrossingMatchings } from '../core/matchings';
-import type { RuleSet } from '../core/ruleset';
+import { edgeSeamIndex, type RuleSet } from '../core/ruleset';
 import { prototile, type Tiling } from '../core/tiling';
 import { glyphFrame, TileGlyph } from './TileGlyph';
 
@@ -13,15 +13,18 @@ interface Props {
   readonly type: string;
   readonly index: number;
   readonly onSetIndex: (index: number) => void;
+  /** Tapping an edge turns its class on or off. */
+  readonly onToggleClass: (cls: number) => void;
   readonly onClose: () => void;
 }
 
 /**
  * One tile, magnified, whose pairing you draw: tap or press a crossing, and
- * a line follows you until it snaps to another crossing. Letting go (or
- * tapping) there pairs the two, keeping as much of the old pairing as fits.
+ * a line follows you, latching on to each crossing you pass. Letting go (or
+ * tapping) pairs it with the last one, keeping as much of the old pairing as
+ * fits. Tapping an edge away from its crossing turns its class on or off.
  */
-export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex, onClose }: Props) {
+export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex, onToggleClass, onClose }: Props) {
   const proto = prototile(tiling, type);
   const { viewBox, span } = glyphFrame(proto.pts);
   const { points, odd } = localChords(tiling, ruleSet, type, selection, index);
@@ -31,6 +34,9 @@ export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex
   const [from, setFrom] = useState<number | null>(null);
   const [cursor, setCursor] = useState<Pt | null>(null);
   const [dragging, setDragging] = useState(false);
+  // The crossing the line last passed over: it stays latched until another
+  // one takes over, or the line goes back to where it started.
+  const [latched, setLatched] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const grab = span * 0.1;
   const snapAt = span * 0.16;
@@ -53,11 +59,39 @@ export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex
     });
     return best;
   };
-  const snap = from !== null && cursor ? nearest(cursor, snapAt, from) : null;
+  const snap = from !== null ? latched : null;
+  const seams = ruleSet.seams[type] ?? [];
+  const pts = proto.pts;
+  const soe = edgeSeamIndex(ruleSet, type, pts.length);
+  // The labelled edge under p (nearest within reach), as its seam.
+  const edgeAt = (p: Pt): number | null => {
+    let best: number | null = null;
+    let bestD = span * 0.07;
+    pts.forEach((a, e) => {
+      if (soe[e] < 0) return;
+      const d = segmentDist(p, a, pts[(e + 1) % pts.length]);
+      if (d < bestD) {
+        best = soe[e];
+        bestD = d;
+      }
+    });
+    return best;
+  };
+  const toggleSeam = (si: number) => {
+    const cls = seams[si].cls;
+    const on = !selection.has(cls);
+    onToggleClass(cls);
+    setMessage(null);
+    setLatched(null);
+    setCursor(null);
+    // Turning an edge on also picks up its crossing, ready to pair.
+    setFrom(on ? seams.slice(0, si).filter((q) => q.cls === cls || selection.has(q.cls)).length : null);
+  };
 
   const connect = (a: number, b: number) => {
     setFrom(null);
     setCursor(null);
+    setLatched(null);
     const has = (m: (typeof matchings)[number], i: number, j: number) => m.some(([x, y]) => (x === i && y === j) || (x === j && y === i));
     let best = -1;
     let bestShared = -1;
@@ -81,29 +115,41 @@ export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex
     if (!p) return;
     const hit = nearest(p, grab, null);
     if (from === null) {
-      if (hit === null) return;
-      setFrom(hit);
-      setCursor(p);
-      setDragging(true);
-      setMessage(null);
-      e.currentTarget.setPointerCapture(e.pointerId);
+      if (hit !== null) {
+        setFrom(hit);
+        setCursor(p);
+        setLatched(null);
+        setDragging(true);
+        setMessage(null);
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } else {
+        const si = edgeAt(p);
+        if (si !== null) toggleSeam(si);
+      }
       return;
     }
-    // Already holding a line: a second tap lands it, or lets go of it.
-    const target = nearest(p, snapAt, from);
+    // Already holding a line: a second tap lands it (on the crossing tapped,
+    // or the one it last latched on to), turns an edge on or off, or lets go.
+    const target = nearest(p, snapAt, from) ?? (hit === from ? null : latched);
     if (target !== null) connect(from, target);
+    else if (hit === null && edgeAt(p) !== null) toggleSeam(edgeAt(p)!);
     else {
-      setFrom(hit !== null && hit !== from ? hit : null);
-      setCursor(p);
+      setFrom(null);
+      setCursor(null);
+      setLatched(null);
     }
   };
   const onMove = (e: PointerEvent<SVGSVGElement>) => {
     if (from === null) return;
     const p = toSvg(e);
-    if (p) setCursor(p);
+    if (!p) return;
+    setCursor(p);
+    const near = nearest(p, snapAt, null);
+    if (near === from) setLatched(null);
+    else if (near !== null) setLatched(near);
   };
   const onUp = () => {
-    if (dragging && from !== null && snap !== null) connect(from, snap);
+    if (dragging && from !== null && latched !== null) connect(from, latched);
     setDragging(false);
   };
 
@@ -131,7 +177,7 @@ export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex
         </button>
       </div>
       <div className="tile-editor-stage">
-        <TileGlyph tiling={tiling} type={type} ruleSet={ruleSet} selection={selection} comboIndex={index} size={260} />
+        <TileGlyph tiling={tiling} type={type} ruleSet={ruleSet} selection={selection} comboIndex={index} size={260} showLabels labelInset={0.3} />
         <svg ref={svg} className="tile-editor-touch" viewBox={viewBox} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
           {points.map((p, i) => (
             <circle key={i} cx={p.x} cy={p.y} r={grab} fill="transparent" className="tile-editor-hit" />
@@ -144,8 +190,16 @@ export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex
         </svg>
       </div>
       <p className="tile-editor-hint">
-        {message ?? (odd ? 'An odd number of crossings: no way to pair them all.' : points.length < 3 ? 'Only one way to pair these.' : from === null ? 'Tap a dot, then drag or tap towards another to pair them.' : 'Now pick the dot to pair it with.')}
+        {message ?? (from !== null ? 'Drag or tap to the dot to pair it with.' : odd ? 'An odd number of crossings: turn an edge on or off to even them up.' : points.length < 3 ? 'Tap an edge to turn it on or off.' : 'Tap a dot to draw from it, or an edge to turn it on or off.')}
       </p>
     </div>
   );
+}
+
+function segmentDist(p: Pt, a: Pt, b: Pt): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+  return dist(p, { x: a.x + t * dx, y: a.y + t * dy });
 }
