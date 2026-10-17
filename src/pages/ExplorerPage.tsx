@@ -887,7 +887,7 @@ function QuickControls(props: QuickProps) {
             const onClick = () => (tileSize === 0 ? onOpenTile(q.id) : onStepTile(q.id, 1));
             const body = (
               <>
-                <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={tileSize === 1 ? 34 : 56} showLabels={tileSize === 0} labelSeams labelScale={2} />
+                <TileGlyph tiling={tiling} type={q.id} ruleSet={ruleSet} selection={selection} comboIndex={combo[q.id] ?? 0} size={tileSize === 1 ? 34 : 56} showLabels={tileSize === 0} labelScale={2} />
                 <span className="quick-tile-name">{q.name}</span>
                 {(varies || n % 2 === 1) && (
                   <span className="quick-tile-ctl">{n % 2 === 1 ? 'odd' : `${((combo[q.id] ?? 0) % choices) + 1}/${choices}`}</span>

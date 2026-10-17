@@ -185,7 +185,7 @@ export function TileEditor({ tiling, ruleSet, selection, type, index, onSetIndex
         ›
       </button>
       <div className="tile-editor-stage">
-        <TileGlyph tiling={tiling} type={type} ruleSet={ruleSet} selection={selection} comboIndex={index} size={260} showLabels labelSeams labelInset={0.3} />
+        <TileGlyph tiling={tiling} type={type} ruleSet={ruleSet} selection={selection} comboIndex={index} size={260} showLabels labelInset={0.3} />
         <svg ref={svg} className="tile-editor-touch" viewBox={viewBox} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
           {points.map((p, i) => (
             <circle key={i} cx={p.x} cy={p.y} r={grab} fill="transparent" className="tile-editor-hit" />

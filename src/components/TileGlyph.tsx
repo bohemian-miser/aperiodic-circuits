@@ -23,8 +23,6 @@ export interface TileGlyphProps {
   readonly labelScale?: number;
   /** How far in from its edge a label sits, as a fraction of the way to the centre. */
   readonly labelInset?: number;
-  /** Label once per seam (a run of edges that meet as one) instead of on every edge. */
-  readonly labelSeams?: boolean;
   /** Seam indices to flag (validation conflicts). */
   readonly flagged?: ReadonlySet<number>;
 }
@@ -43,7 +41,7 @@ export function glyphFrame(pts: readonly Pt[]): { viewBox: string; span: number 
 }
 
 export function TileGlyph(props: TileGlyphProps) {
-  const { tiling, type, ruleSet, selection, comboIndex = 0, size = 120, onEdgeClick, onVertexClick, showLabels, labelScale = 1, labelInset = 0.18, labelSeams = false, flagged } = props;
+  const { tiling, type, ruleSet, selection, comboIndex = 0, size = 120, onEdgeClick, onVertexClick, showLabels, labelScale = 1, labelInset = 0.18, flagged } = props;
   const proto = prototile(tiling, type);
   const pts = proto.pts;
   const n = pts.length;
@@ -113,11 +111,11 @@ export function TileGlyph(props: TileGlyphProps) {
                 <title>{`Edge ${e}${cls === null ? ' (no class)' : `, seam ${si}, class ${className(ruleSet, cls)}`}`}</title>
               </line>
             )}
-            {showLabels && !labelSeams && cls !== null && label(lerpPt(lerpPt(a, b, 0.5), ctr, labelInset), cls, lit, e)}
           </g>
         );
       })}
-      {showLabels && labelSeams && seams.map((q, i) => label(lerpPt(seamCenter(pts, q), ctr, labelInset), q.cls, !selection || selection.has(q.cls), `s${i}`))}
+      {/* One label per seam, at its centre: a seam's edges all share its class. */}
+      {showLabels && seams.map((q, i) => label(lerpPt(seamCenter(pts, q), ctr, labelInset), q.cls, !selection || selection.has(q.cls), `s${i}`))}
       {(morph ? morph.m.still.map((i) => chords!.chords[i]) : chords?.chords)?.map((c, i) => (
         <path key={i} d={`M${c.a.x},${c.a.y} Q${c.c.x},${c.c.y} ${c.b.x},${c.b.y}`} fill="none" stroke="var(--ink)" strokeWidth={sw * 1.3} strokeLinecap="round" />
       ))}
