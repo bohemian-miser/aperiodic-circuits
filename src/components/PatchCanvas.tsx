@@ -5,6 +5,7 @@ import { edgeSeamIndex, type RuleSet } from '../core/ruleset';
 import { instancePts, patchBounds, prototile, type TileInstance, type Tiling } from '../core/tiling';
 import { classColor, lengthHue, mixColor, OPEN_COLOR, rainbow, TAIL_COLOR, toRgb, type Rgb } from '../colors';
 import type { StrandChase } from '../core/chase';
+import type { SuperInstance } from '../core/infinite';
 import { advanceFollowCamera, createFollowCamera } from '../core/followCamera';
 import { halfAt, MORPH_MS, morphChords, morphProgress, prefersReducedMotion, type ChordMorph } from '../core/morph';
 
@@ -29,8 +30,20 @@ export interface PatchCanvasProps {
   readonly fitBounds?: WorldRect;
   /** Called (debounced) with the world rectangle on screen after the view settles. */
   readonly onViewChange?: (rect: WorldRect) => void;
-  /** Stop zooming out once roughly this many tiles of this area would be on screen. */
-  readonly zoomLimit?: { readonly tileArea: number; readonly maxTiles: number };
+  /** How far out you can zoom, in pixels per world unit (default 1e-3). */
+  readonly minScale?: number;
+  /**
+   * Whole supertiles to draw (infinite mode zoomed far out, as on the Spectre
+   * map), each as its glyph filled in its type's colour.
+   */
+  readonly supertiles?: readonly SuperInstance[];
+  readonly glyph?: (type: string, level: number) => readonly Pt[];
+  /**
+   * Paths are built relative to this point and it is put back in the
+   * drawing transform, so a view far from the world's origin keeps its
+   * precision (canvas paths are single precision).
+   */
+  readonly origin?: Pt;
   /** Draw the picked line as a rainbow from end to end (infinite mode's traced strand). */
   readonly selectedRainbow?: boolean;
   /**
@@ -84,6 +97,8 @@ interface TrailChunk {
   maxY: number;
   /** The line's index of the chunk's first chord. */
   readonly base: number;
+  /** Its paths are built relative to this point. */
+  readonly o: Pt;
   readonly all: Path2D;
   /** 'repeat': the chunk's chords by colour. */
   readonly buckets: Map<string, Path2D>;
@@ -109,6 +124,19 @@ export interface WorldRect {
   readonly maxY: number;
 }
 
+const ORIGIN: Pt = { x: 0, y: 0 };
+
+/** Draw in world units, for paths built relative to `o`. */
+function worldTransform(c: CanvasRenderingContext2D, v: View, dpr: number, o: Pt): void {
+  c.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, (v.tx + v.scale * o.x) * dpr, (v.ty + v.scale * o.y) * dpr);
+}
+
+/** A chord appended to a path built relative to `o`. */
+function addChord(p: Path2D, ch: { readonly a: Pt; readonly b: Pt; readonly c: Pt }, o: Pt): void {
+  p.moveTo(ch.a.x - o.x, ch.a.y - o.y);
+  p.quadraticCurveTo(ch.c.x - o.x, ch.c.y - o.y, ch.b.x - o.x, ch.b.y - o.y);
+}
+
 interface View {
   scale: number;
   tx: number;
@@ -127,6 +155,8 @@ interface MorphState {
   /** Its last frame (the finished picture) has been drawn. */
   done: boolean;
   readonly morph: ChordMorph;
+  /** Its paths are built relative to this point. */
+  readonly o: Pt;
   /** The lines that stay put, by their old and by their new colour. */
   readonly stillOld: Map<string, Path2D>;
   readonly stillNew: Map<string, Path2D>;
@@ -176,7 +206,7 @@ function chordWidth(scale: number, lineWidth = 1): number {
 }
 
 export function PatchCanvas(props: PatchCanvasProps) {
-  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath, chase = null, trailRainbow = 'repeat' } = props;
+  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath, chase = null, trailRainbow = 'repeat', supertiles, glyph, origin: O = ORIGIN } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 });
@@ -188,15 +218,37 @@ export function PatchCanvas(props: PatchCanvasProps) {
   // regrowing 100,000 tiles as you pan) nothing does.
   const geo = useMemo(() => {
     const fills = new Map<string, Path2D>();
+    const fillOf = (type: string) => {
+      const color = prototile(tiling, type).color;
+      let f = fills.get(color);
+      if (!f) fills.set(color, (f = new Path2D()));
+      return f;
+    };
     for (const inst of instances) {
-      const proto = prototile(tiling, inst.type);
       const pts = instancePts(tiling, inst);
-      let f = fills.get(proto.color);
-      if (!f) fills.set(proto.color, (f = new Path2D()));
-      f.moveTo(pts[0].x, pts[0].y);
+      const f = fillOf(inst.type);
+      f.moveTo(pts[0].x - O.x, pts[0].y - O.y);
       // No closePath: fill closes each subpath anyway, and closePath gets slow
       // on a Path2D holding tens of thousands of them.
-      for (let i = 1; i < pts.length; i++) f.lineTo(pts[i].x, pts[i].y);
+      for (let i = 1; i < pts.length; i++) f.lineTo(pts[i].x - O.x, pts[i].y - O.y);
+    }
+    // Supertile glyphs only nearly meet, so where two overlap a same-coloured
+    // pair must not cancel out under the nonzero rule: every one goes in
+    // counter-clockwise, whatever its map does to it.
+    let bounds = instances.length || !supertiles?.length ? patchBounds(tiling, instances) : { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    for (const st of glyph ? supertiles ?? [] : []) {
+      const g = glyph!(st.type, st.level);
+      const M = st.xform;
+      const flip = M[0] * M[4] - M[1] * M[3] < 0;
+      const f = fillOf(st.type);
+      for (let k = 0; k < g.length; k++) {
+        const q = g[flip ? g.length - 1 - k : k];
+        const x = M[0] * q.x + M[1] * q.y + M[2];
+        const y = M[3] * q.x + M[4] * q.y + M[5];
+        if (k) f.lineTo(x - O.x, y - O.y);
+        else f.moveTo(x - O.x, y - O.y);
+        if (!instances.length) bounds = { minX: Math.min(bounds.minX, x), minY: Math.min(bounds.minY, y), maxX: Math.max(bounds.maxX, x), maxY: Math.max(bounds.maxY, y) };
+      }
     }
     let edges: { outline: Path2D; hidden: Path2D; byClass: Map<number, Path2D> } | null = null;
     const getEdges = () => {
@@ -214,21 +266,21 @@ export function PatchCanvas(props: PatchCanvasProps) {
           const a = pts[e];
           const b = pts[(e + 1) % pts.length];
           const target = hid?.includes(e) ? hidden : outline;
-          target.moveTo(a.x, a.y);
-          target.lineTo(b.x, b.y);
+          target.moveTo(a.x - O.x, a.y - O.y);
+          target.lineTo(b.x - O.x, b.y - O.y);
           if (soe && soe[e] >= 0) {
             const cls = ruleSet!.seams[inst.type][soe[e]].cls;
             let cp = byClass.get(cls);
             if (!cp) byClass.set(cls, (cp = new Path2D()));
-            cp.moveTo(a.x, a.y);
-            cp.lineTo(b.x, b.y);
+            cp.moveTo(a.x - O.x, a.y - O.y);
+            cp.lineTo(b.x - O.x, b.y - O.y);
           }
         }
       }
       return (edges = { outline, hidden, byClass });
     };
-    return { fills, edges: getEdges, bounds: patchBounds(tiling, instances) };
-  }, [tiling, instances, ruleSet]);
+    return { fills, edges: getEdges, bounds };
+  }, [tiling, instances, ruleSet, supertiles, glyph, O]);
 
   const chordGeo = useMemo(() => {
     if (!circuits) return null;
@@ -246,11 +298,10 @@ export function PatchCanvas(props: PatchCanvasProps) {
       const col = chordColor[i];
       let p = byColor.get(col);
       if (!p) byColor.set(col, (p = new Path2D()));
-      p.moveTo(ch.a.x, ch.a.y);
-      p.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+      addChord(p, ch, O);
     });
     return { byColor, colors, chordColor };
-  }, [circuits, rainbowLines]);
+  }, [circuits, rainbowLines, O]);
 
   const morph = useRef<MorphState | null>(null);
   const morphFrom = useRef<{ circuits?: CircuitResult; colors?: readonly string[]; key: unknown }>({ key: undefined });
@@ -264,16 +315,14 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const buckets = new Map<string, Path2D>();
     chords.forEach((ci, k) => {
       const ch = circuits.chords[ci];
-      p.moveTo(ch.a.x, ch.a.y);
-      p.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+      addChord(p, ch, O);
       const col = trailRainbow === 'repeat' ? repeatingRainbow(k) : stretchedRainbow(chords.length > 1 ? k / (chords.length - 1) : 0);
       let b = buckets.get(col);
       if (!b) buckets.set(col, (b = new Path2D()));
-      b.moveTo(ch.a.x, ch.a.y);
-      b.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+      addChord(b, ch, O);
     });
     return { all: p, buckets };
-  }, [circuits, selectedPath, trailRainbow]);
+  }, [circuits, selectedPath, trailRainbow, O]);
 
   // The chase trail, kept as Path2Ds in chunks of consecutive chords that
   // are only ever appended to, so a frame strokes just the chunks on screen
@@ -289,7 +338,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       const ch = chase.chord(g - chase.dropped);
       const k = Math.floor(g / TRAIL_CHUNK);
       let C = T.chunks.get(k);
-      if (!C) T.chunks.set(k, (C = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, base: k * TRAIL_CHUNK, all: new Path2D(), buckets: new Map(), pieces: [] }));
+      if (!C) T.chunks.set(k, (C = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, base: k * TRAIL_CHUNK, o: { x: Math.round(ch.a.x), y: Math.round(ch.a.y) }, all: new Path2D(), buckets: new Map(), pieces: [] }));
       let b: Path2D;
       if (T.mode === 'repeat') {
         const col = repeatingRainbow(g);
@@ -300,10 +349,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
         const i = Math.floor((g % TRAIL_CHUNK) / TRAIL_PIECE);
         b = C.pieces[i] ??= new Path2D();
       }
-      for (const q of [C.all, b]) {
-        q.moveTo(ch.a.x, ch.a.y);
-        q.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
-      }
+      for (const q of [C.all, b]) addChord(q, ch, C.o);
       for (const p of [ch.a, ch.b, ch.c]) {
         C.minX = Math.min(C.minX, p.x);
         C.minY = Math.min(C.minY, p.y);
@@ -316,7 +362,6 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const dpr = window.devicePixelRatio || 1;
     const v = view.current;
     const { w, h } = size.current;
-    ctx.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
     const lw = chordWidth(v.scale, props.lineWidth);
     const pad = lw * 4;
     const minX = -v.tx / v.scale - pad;
@@ -328,17 +373,24 @@ export function PatchCanvas(props: PatchCanvasProps) {
     ctx.lineJoin = 'round';
     ctx.strokeStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
     ctx.lineWidth = lw * 3.2;
-    for (const C of shown) ctx.stroke(C.all);
+    for (const C of shown) {
+      worldTransform(ctx, v, dpr, C.o);
+      ctx.stroke(C.all);
+    }
     ctx.lineWidth = lw * 1.8;
     // A closed circuit takes one solid colour by its length, as on the patch.
     if (chase.status === 'closed') {
       ctx.strokeStyle = circuitColor(circuits, chase.steps);
-      for (const C of shown) ctx.stroke(C.all);
+      for (const C of shown) {
+        worldTransform(ctx, v, dpr, C.o);
+        ctx.stroke(C.all);
+      }
       // Its head is back at the start: a marker there would read as a gap in the loop.
       return;
     }
     if (T.mode === 'repeat') {
       for (const C of shown) {
+        worldTransform(ctx, v, dpr, C.o);
         for (const [col, b] of C.buckets) {
           ctx.strokeStyle = col;
           ctx.stroke(b);
@@ -351,6 +403,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       const at = (g: number) => stretchedRainbow((g - chase.dropped) / held);
       const fine = shown.length * (TRAIL_CHUNK / TRAIL_PIECE) <= MAX_TRAIL_PIECES;
       for (const C of shown) {
+        worldTransform(ctx, v, dpr, C.o);
         if (!fine) {
           ctx.strokeStyle = at(C.base + TRAIL_CHUNK / 2);
           ctx.stroke(C.all);
@@ -363,8 +416,9 @@ export function PatchCanvas(props: PatchCanvasProps) {
       }
     }
     const hd = chase.headPt;
+    worldTransform(ctx, v, dpr, hd);
     ctx.beginPath();
-    ctx.arc(hd.x, hd.y, Math.max(lw * 2.4, 4 / v.scale), 0, 2 * Math.PI);
+    ctx.arc(0, 0, Math.max(lw * 2.4, 4 / v.scale), 0, 2 * Math.PI);
     ctx.fillStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
     ctx.fill();
     ctx.lineWidth = lw;
@@ -396,7 +450,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       c.setTransform(1, 0, 0, 1, 0, 0);
       c.fillStyle = cssVar(canvas, '--canvas-bg', '#fbfaf7');
       c.fillRect(0, 0, w * dpr, h * dpr);
-      c.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
+      worldTransform(c, v, dpr, O);
       if (showTiles) {
         c.globalAlpha = dim ? 0.3 : 0.55;
         for (const [color, p] of geo.fills) {
@@ -450,7 +504,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
           const cx = c.getContext('2d');
           if (!cx) return c;
           cx.drawImage(g, 0, 0);
-          cx.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
+          worldTransform(cx, v, dpr, M.o);
           cx.lineWidth = lw;
           cx.lineCap = 'round';
           cx.lineJoin = 'round';
@@ -489,7 +543,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       ctx.drawImage(B.from, 0, 0);
       ctx.globalAlpha = u;
       ctx.drawImage(B.to, 0, 0);
-      ctx.setTransform(v.scale * dpr, 0, 0, v.scale * dpr, v.tx * dpr, v.ty * dpr);
+      worldTransform(ctx, v, dpr, M.o);
       ctx.lineWidth = lw;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -499,8 +553,8 @@ export function PatchCanvas(props: PatchCanvasProps) {
         const path = new Path2D();
         for (const i of list) {
           const { e, q, m } = halfAt(M.morph.moving[i], u);
-          path.moveTo(e.x, e.y);
-          path.quadraticCurveTo(q.x, q.y, m.x, m.y);
+          path.moveTo(e.x - M.o.x, e.y - M.o.y);
+          path.quadraticCurveTo(q.x - M.o.x, q.y - M.o.y, m.x - M.o.x, m.y - M.o.y);
         }
         ctx.strokeStyle = H.fixed ?? mixColor(H.from, H.to, u);
         ctx.stroke(path);
@@ -549,7 +603,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     snapshot.current = { canvas: snap, view: { ...v }, ms: performance.now() - t0 };
     drawTrail(ctx, canvas);
     reportView();
-  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase, trailRainbow]);
+  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase, trailRainbow, O]);
 
   // Tell the owner what's on screen once the view stops moving.
   const viewTimer = useRef(0);
@@ -574,14 +628,8 @@ export function PatchCanvas(props: PatchCanvasProps) {
     }, wait);
   }
 
-  const minScale = useCallback(() => {
-    const zl = props.zoomLimit;
-    if (!zl) return 1e-3;
-    const { w, h } = size.current;
-    return Math.sqrt((w * h) / (zl.maxTiles * zl.tileArea));
-  }, [props.zoomLimit]);
-  const minScaleRef = useRef(minScale);
-  minScaleRef.current = minScale;
+  const minScaleRef = useRef(props.minScale ?? 1e-3);
+  minScaleRef.current = props.minScale ?? 1e-3;
 
 
   const drawRef = useRef(draw);
@@ -708,7 +756,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const b = fitBoundsRef.current ?? geo.bounds;
     const bw = Math.max(1e-6, b.maxX - b.minX);
     const bh = Math.max(1e-6, b.maxY - b.minY);
-    const scale = Math.max(minScaleRef.current(), 0.94 * Math.min(w / bw, h / bh));
+    const scale = Math.max(minScaleRef.current, 0.94 * Math.min(w / bw, h / bh));
     view.current = { scale, tx: w / 2 - scale * (b.minX + bw / 2), ty: top + h / 2 - scale * (b.minY + bh / 2) };
     schedule();
   }, [geo, schedule]);
@@ -776,8 +824,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const add = (by: Map<string, Path2D>, col: string, ch: Chord) => {
       let p = by.get(col);
       if (!p) by.set(col, (p = new Path2D()));
-      p.moveTo(ch.a.x, ch.a.y);
-      p.quadraticCurveTo(ch.c.x, ch.c.y, ch.b.x, ch.b.y);
+      addChord(p, ch, O);
     };
     m.still.forEach((i, k) => {
       add(stillOld, oldColor[m.stillFrom[k]] ?? newColor[i], circuits.chords[i]);
@@ -792,7 +839,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       if (!H) halves.set(k, (H = { from: toRgb(a), to: toRgb(b), fixed: a === b ? a : null, list: [] }));
       H.list.push(i);
     });
-    const M: MorphState = { start: null, done: false, morph: m, stillOld, stillNew, halves, base: null };
+    const M: MorphState = { start: null, done: false, morph: m, o: O, stillOld, stillNew, halves, base: null };
     morph.current = M;
     const tick = () => {
       if (morph.current !== M) return;
@@ -858,7 +905,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     };
     const zoomAt = (x: number, y: number, k: number) => {
       const v = view.current;
-      const s = Math.max(minScaleRef.current(), Math.min(1e5, v.scale * k));
+      const s = Math.max(minScaleRef.current, Math.min(1e5, v.scale * k));
       const kk = s / v.scale;
       view.current = { scale: s, tx: x - (x - v.tx) * kk, ty: y - (y - v.ty) * kk };
       scheduleMove();
@@ -953,7 +1000,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       <canvas ref={canvasRef} aria-label={`${tiling.name} patch`} />
       <div className="canvas-tools" style={props.insets ? { top: props.insets.top + 10 } : undefined}>
         <button type="button" onClick={() => zoomBy(view, size.current, 1.4, schedule)} aria-label="Zoom in">+</button>
-        <button type="button" onClick={() => zoomBy(view, size.current, 1 / 1.4, schedule, minScaleRef.current())} aria-label="Zoom out">−</button>
+        <button type="button" onClick={() => zoomBy(view, size.current, 1 / 1.4, schedule, minScaleRef.current)} aria-label="Zoom out">−</button>
         <button type="button" onClick={fit} aria-label="Fit to view">Fit</button>
       </div>
     </div>
