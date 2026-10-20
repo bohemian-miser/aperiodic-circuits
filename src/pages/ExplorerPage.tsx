@@ -672,6 +672,8 @@ export function ExplorerPage({ route }: Props) {
             aria-label="Share string: the edges and pairing"
             title="The edges and pairing: copy it, or paste one in"
             value={shareDraft ?? share}
+            // Wide enough for the whole string (monospace, so 1ch per character).
+            style={{ width: `calc(${Math.max(8, (shareDraft ?? share).length + 1)}ch + 14px)` }}
             onChange={(e) => setShareDraft(e.target.value)}
             onBlur={() => shareDraft !== null && applyShare(shareDraft)}
             onKeyDown={(e) => e.key === 'Enter' && applyShare((e.target as HTMLInputElement).value)}

@@ -403,7 +403,7 @@ details summary {
 }
 
 .stats input.stats-share {
-  width: 14ch;
+  max-width: 100%;
   min-width: 0;
   padding: 1px 6px;
 }
