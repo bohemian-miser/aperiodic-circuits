@@ -5,7 +5,7 @@ import { analyzeParity, basisCoords, crossingCounts } from '../core/parity';
 import { className, computeAdjacency, ruleSetClasses, type RuleSet } from '../core/ruleset';
 import { decodeShare, encodeShare } from '../core/share';
 import { getTiling } from '../core/tilings';
-import { InfinitePlane, meanTileArea, supportsInfinite, type Rect } from '../core/infinite';
+import { InfinitePlane, supportsInfinite, type Rect } from '../core/infinite';
 import { qkey } from '../core/polygon';
 import { StrandChase, type ChaseStatus } from '../core/chase';
 import type { Tiling } from '../core/tiling';
@@ -141,10 +141,22 @@ export function ExplorerPage({ route }: Props) {
   const counts = useMemo(() => crossingCounts(tiling, ruleSet, selection), [tiling, ruleSet, selection]);
   const infinite = infiniteOn && supportsInfinite(tiling);
   const plane = useMemo(() => (infinite ? new InfinitePlane(tiling, root, seed) : null), [infinite, tiling, root, seed]);
-  const instances = useMemo(() => {
-    if (!plane) return tiling.generate(level, root);
-    return plane.query(grownRect, Math.ceil(screenTiles * INFINITE_QUERY_FACTOR)).instances;
+  // Zoomed out past the tile budget, the plane hands back whole supertiles
+  // instead of their tiles, as the Spectre map does, so there's no limit on
+  // zooming out: they're drawn as filled outlines, with no lines.
+  const patch = useMemo(() => {
+    if (!plane) return { instances: tiling.generate(level, root), supertiles: [], cutLevel: 0 };
+    return plane.query(grownRect, Math.ceil(screenTiles * INFINITE_QUERY_FACTOR), { lod: true });
   }, [plane, tiling, level, root, grownRect, screenTiles]);
+  const instances = patch.instances;
+  const cutLevel = patch.cutLevel;
+  const glyph = useMemo(() => (plane ? (type: string, lv: number) => plane.glyph(type, lv) : undefined), [plane]);
+  // Paths are drawn relative to the middle of what was grown, so a view far
+  // out on the plane stays sharp.
+  const origin = useMemo(
+    () => (infinite ? { x: Math.round((grownRect.minX + grownRect.maxX) / 2), y: Math.round((grownRect.minY + grownRect.maxY) / 2) } : undefined),
+    [infinite, grownRect],
+  );
   // Matching the tiles up and following every line is most of what a regrow
   // costs, so a big infinite view only lays the chords, as the Spectre map
   // does past its circuit ceiling: the lines show, uncoloured, and a click
@@ -416,7 +428,7 @@ export function ExplorerPage({ route }: Props) {
           {infinite ? (
             <>
               <p className="hint">
-                The whole plane, grown around the view as you pan ({instances.length.toLocaleString()} tiles in view). {chaseOn ? 'Click a line and the camera chases it across the plane.' : 'Click a line to trace it: it stays picked, in a rainbow, as you follow it.'}
+                The whole plane, grown around the view as you pan ({cutLevel > 0 ? `${patch.supertiles.length.toLocaleString()} level-${cutLevel} supertiles in view` : `${instances.length.toLocaleString()} tiles in view`}). {chaseOn ? 'Click a line and the camera chases it across the plane.' : 'Click a line to trace it: it stays picked, in a rainbow, as you follow it.'}
               </p>
               <div className="row">
                 <label className="field inline">
@@ -504,8 +516,11 @@ export function ExplorerPage({ route }: Props) {
               )}
               <details>
                 <summary>Advanced</summary>
-                <label className="field" title="How far you can zoom out. Every pan regrows what's on screen, so more tiles means slower panning.">
-                  <span>Zoom-out limit</span>
+                <label
+                  className="field"
+                  title="Zoomed out past this many tiles, whole supertiles are drawn instead (without their lines), as on the Spectre map. Every pan regrows what's on screen, so more tiles means slower panning."
+                >
+                  <span>Draw tiles up to</span>
                   <select value={screenTiles} onChange={(e) => setScreenTiles(Number(e.target.value))}>
                     {SCREEN_TILE_OPTIONS.map((n) => (
                       <option key={n} value={n}>
@@ -617,7 +632,10 @@ export function ExplorerPage({ route }: Props) {
           fitKey={infinite ? plane : undefined}
           fitBounds={infinite ? INITIAL_VIEW : undefined}
           onViewChange={infinite ? onViewChange : undefined}
-          zoomLimit={infinite ? { tileArea: meanTileArea(tiling), maxTiles: screenTiles } : undefined}
+          minScale={infinite ? INFINITE_MIN_SCALE : undefined}
+          supertiles={patch.supertiles}
+          glyph={glyph}
+          origin={origin}
           selectedRainbow={infinite}
           trailRainbow={stretchRainbow ? 'stretch' : 'repeat'}
           insets={topHeight === null || bottomHeight === null ? undefined : { top: topHeight, bottom: bottomHeight }}
@@ -626,7 +644,11 @@ export function ExplorerPage({ route }: Props) {
         <div className="stage-bottom" ref={bottomRef}>
         {quick}
         <div className="stats">
-          {circuits.untraced && chasing ? null : circuits.untraced ? (
+          {(circuits.untraced || cutLevel > 0) && chasing ? null : cutLevel > 0 ? (
+            <span className="hint" title="Zoom in, or raise “Draw tiles up to” under Infinite › Advanced">
+              Showing level-{cutLevel} supertiles: zoom in to see the lines
+            </span>
+          ) : circuits.untraced ? (
             <span className="hint" title="Zoom in, or raise “Colour circuits up to” under Infinite › Advanced">
               Circuits not coloured: {instances.length.toLocaleString()} tiles in view, over the {traceLimit.toLocaleString()} limit
             </span>
@@ -692,7 +714,12 @@ export function ExplorerPage({ route }: Props) {
 
 /** Infinite mode starts looking at this window round the centre tile. */
 const INITIAL_VIEW: Rect = { minX: -16, minY: -16, maxX: 16, maxY: 16 };
-/** By default zoom-out stops at about this many tiles on screen (Advanced can change it)… */
+/**
+ * Zoom-out floor, as on the Spectre map: a 1500 px view then spans about
+ * 1.5e11 units, far out of reach of anyone's scroll wheel.
+ */
+const INFINITE_MIN_SCALE = 1e-8;
+/** By default, zoomed out past about this many tiles on screen, supertiles are drawn instead (Advanced can change it)… */
 const INFINITE_SCREEN_TILES = 50_000;
 const SCREEN_TILE_OPTIONS = [10_000, 25_000, 50_000, 100_000, 200_000];
 /** Infinite mode follows every line and colours circuits up to this many tiles (Advanced can change it). */

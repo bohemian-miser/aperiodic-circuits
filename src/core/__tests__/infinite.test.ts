@@ -8,7 +8,7 @@ import { analyzeParity } from '../parity';
 import { hexTiling } from '../tilings/spectre';
 import { latticeTiling } from '../lattice';
 import { LATTICE_PRESETS } from '../latticePresets';
-import { pointKeyer, qkey } from '../polygon';
+import { pointKeyer, qkey, signedArea } from '../polygon';
 import { transPt } from '../geom';
 import { prototile } from '../tiling';
 
@@ -96,5 +96,36 @@ describe('infinite mode', () => {
     expect(typeof key(1e5 + 1, -1e5)).toBe('number');
     expect(typeof key(1e5 + 1e5, -1e5)).toBe('string');
     expect(key(1e5 + 1e5, -1e5)).toBe(key(1e5 + 1e5 + 1e-5, -1e5));
+  });
+
+  it('zoomed far out, a query cuts to whole supertiles and stays within its budget', () => {
+    for (const t of all) {
+      const plane = new InfinitePlane(t, t.defaultRoot);
+      for (const half of [1e3, 1e6, 1e10]) {
+        const q = plane.query({ minX: -half, minY: -half, maxX: half, maxY: half }, 50_000, { lod: true });
+        expect(q.cutLevel, `${t.id} ${half}`).toBeGreaterThan(0);
+        expect(q.instances.length, `${t.id} ${half}`).toBe(0);
+        expect(q.supertiles.length, `${t.id} ${half}`).toBeGreaterThan(100);
+        expect(q.supertiles.length, `${t.id} ${half}`).toBeLessThanOrEqual(50_000);
+        expect(q.supertiles.every((s) => s.level === q.cutLevel), t.id).toBe(true);
+      }
+      // A view small enough for the budget still gets its tiles.
+      expect(plane.query({ minX: -10, minY: -10, maxX: 10, maxY: 10 }, 50_000, { lod: true }).cutLevel, t.id).toBe(0);
+    }
+  });
+
+  it("a supertile's glyph has about its area", () => {
+    for (const t of all) {
+      const plane = new InfinitePlane(t, t.defaultRoot);
+      for (const p of t.prototiles) {
+        for (const lv of [1, 2, 3, 5, 8, 12, 20]) {
+          if (!plane.leafCount(p.id, lv)) continue;
+          const ratio = signedArea(plane.glyph(p.id, lv)) / plane.area(p.id, lv);
+          // Counter-clockwise, and near enough the true outline to fill it.
+          expect(ratio, `${t.id} ${p.id} level ${lv}`).toBeGreaterThan(0.85);
+          expect(ratio, `${t.id} ${p.id} level ${lv}`).toBeLessThan(1.7);
+        }
+      }
+    }
   });
 });
