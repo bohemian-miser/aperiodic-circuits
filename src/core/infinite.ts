@@ -38,6 +38,8 @@ interface Ancestor {
   readonly level: number;
   /** Its own frame -> world. */
   readonly world: Affine;
+  /** Which of its children is the ancestor below it (-1 for the anchor). */
+  readonly slot: number;
 }
 
 /** Hard ceiling on ancestor levels, whatever the growth rate. */
@@ -88,7 +90,7 @@ export class InfinitePlane {
   ) {
     if (!tiling.hierarchy) throw new Error(`${tiling.name} has no hierarchy`);
     this.h = tiling.hierarchy;
-    this.chain = [{ type: anchorType, level: 0, world: IDENT }];
+    this.chain = [{ type: anchorType, level: 0, world: IDENT, slot: -1 }];
     this.rnd = mulberry32(seed);
     const f = typeFrequencies(tiling, this.h);
     this.weight = f.weight;
@@ -126,11 +128,11 @@ export class InfinitePlane {
   private grow(): boolean {
     const top = this.chain[this.chain.length - 1];
     const level = top.level + 1;
-    const options: { type: string; rel: Affine; w: number }[] = [];
+    const options: { type: string; rel: Affine; slot: number; w: number }[] = [];
     for (const p of this.tiling.prototiles) {
-      for (const k of this.h.children(p.id, level)) {
-        if (k.type === top.type) options.push({ type: p.id, rel: k.xform, w: this.weight.get(p.id) ?? 1 });
-      }
+      this.h.children(p.id, level).forEach((k, slot) => {
+        if (k.type === top.type) options.push({ type: p.id, rel: k.xform, slot, w: this.weight.get(p.id) ?? 1 });
+      });
     }
     if (!options.length) return false;
     let x = this.rnd() * options.reduce((sum, o) => sum + o.w, 0);
@@ -143,7 +145,7 @@ export class InfinitePlane {
       }
     }
     // world(parent) · rel = world(top)  =>  world(parent) = world(top) · rel⁻¹
-    this.chain.push({ type: pick.type, level, world: mul(top.world, inv(pick.rel)) });
+    this.chain.push({ type: pick.type, level, world: mul(top.world, inv(pick.rel)), slot: pick.slot });
     return true;
   }
 
@@ -165,7 +167,13 @@ export class InfinitePlane {
     const top = this.chain[this.chain.length - 1];
     const out: SuperInstance[] = [];
     let truncated = false;
-    const go = (type: string, level: number, world: Affine): void => {
+    // Going down the chain itself, each ancestor's stored map is used rather
+    // than the product down from the top: those were built up from the
+    // anchor, so they stay as exact as the tiles round the anchor need,
+    // however high a zoomed-out view has grown the chain. Multiplied down
+    // from a tall top, they drift, and tiles fetched before and after no
+    // longer meet.
+    const go = (type: string, level: number, world: Affine, onChain: boolean): void => {
       if (out.length >= cap) {
         truncated = true;
         return;
@@ -177,9 +185,13 @@ export class InfinitePlane {
         out.push({ type, level, xform: world });
         return;
       }
-      for (const k of this.h.children(type, level)) go(k.type, level - 1, mul(world, k.xform));
+      const slot = onChain ? this.chain[level].slot : -1;
+      this.h.children(type, level).forEach((k, j) => {
+        if (j === slot) go(k.type, level - 1, this.chain[level - 1].world, true);
+        else go(k.type, level - 1, mul(world, k.xform), false);
+      });
     };
-    go(top.type, top.level, top.world);
+    go(top.type, top.level, top.world, true);
     return { nodes: out, truncated };
   }
 

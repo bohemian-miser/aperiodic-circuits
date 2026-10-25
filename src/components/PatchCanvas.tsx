@@ -106,6 +106,34 @@ const TRAIL_CHUNK = 512;
 const TRAIL_PIECE = 8;
 /** With more pieces than this on screen, a whole chunk takes one colour. */
 const MAX_TRAIL_PIECES = 2000;
+/**
+ * Zoomed out, the trail is drawn from a lighter copy: straight lines through
+ * every COARSE_STRIDE-th crossing, in runs of COARSE_PIECE chords, each run
+ * in one colour. Below COARSE_SCALE pixels per unit a tile is a few pixels,
+ * so the curves can't be told from it, and stroking every one of a long
+ * chase's curves twice a frame was what made zooming out on one crawl.
+ */
+const COARSE_STRIDE = 4;
+const COARSE_PIECE = 64;
+const COARSE_SCALE = 4;
+/**
+ * Further out still, when even the runs would mean thousands of strokes a
+ * frame, whole blocks of BLOCK chords go as one path each, through every
+ * BLOCK_STRIDE-th crossing, in one colour.
+ */
+const BLOCK = 8192;
+const BLOCK_STRIDE = 32;
+const MAX_COARSE_PIECES = 1500;
+
+interface TrailBlock {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  readonly base: number;
+  readonly o: Pt;
+  readonly path: Path2D;
+}
 /** Colour steps along a rainbow, where its chords are batched by colour. */
 const RAINBOW_STEPS = 120;
 
@@ -123,6 +151,8 @@ interface TrailChunk {
   readonly buckets: Map<string, Path2D>;
   /** 'stretch': the chunk's chords in runs of TRAIL_PIECE. */
   readonly pieces: Path2D[];
+  /** The lighter copy for zoomed-out views, in runs of COARSE_PIECE. */
+  readonly coarse: Path2D[];
 }
 
 /** The repeating rainbow's colour for the line's g-th chord. */
@@ -360,17 +390,17 @@ export function PatchCanvas(props: PatchCanvasProps) {
   // are only ever appended to, so a frame strokes just the chunks on screen
   // and the hold drops whole chunks off the back. A change of rainbow
   // rebuilds them from the chords held.
-  const trail = useRef<{ chase: StrandChase; mode: TrailRainbow; built: number; chunks: Map<number, TrailChunk> } | null>(null);
+  const trail = useRef<{ chase: StrandChase; mode: TrailRainbow; built: number; chunks: Map<number, TrailChunk>; blocks: Map<number, TrailBlock> } | null>(null);
   const drawTrail = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
     if (!chase) return;
     let T = trail.current;
-    if (!T || T.chase !== chase || T.mode !== trailRainbow) T = trail.current = { chase, mode: trailRainbow, built: 0, chunks: new Map() };
+    if (!T || T.chase !== chase || T.mode !== trailRainbow) T = trail.current = { chase, mode: trailRainbow, built: 0, chunks: new Map(), blocks: new Map() };
     const end = chase.dropped + chase.chords;
     for (let g = Math.max(T.built, chase.dropped); g < end; g++) {
       const ch = chase.chord(g - chase.dropped);
       const k = Math.floor(g / TRAIL_CHUNK);
       let C = T.chunks.get(k);
-      if (!C) T.chunks.set(k, (C = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, base: k * TRAIL_CHUNK, o: { x: Math.round(ch.a.x), y: Math.round(ch.a.y) }, all: new Path2D(), buckets: new Map(), pieces: [] }));
+      if (!C) T.chunks.set(k, (C = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, base: k * TRAIL_CHUNK, o: { x: Math.round(ch.a.x), y: Math.round(ch.a.y) }, all: new Path2D(), buckets: new Map(), pieces: [], coarse: [] }));
       let b: Path2D;
       if (T.mode === 'repeat') {
         const col = repeatingRainbow(g);
@@ -382,6 +412,21 @@ export function PatchCanvas(props: PatchCanvasProps) {
         b = C.pieces[i] ??= new Path2D();
       }
       for (const q of [C.all, b]) addChord(q, ch, C.o);
+      const i = g % TRAIL_CHUNK;
+      const cp = Math.floor(i / COARSE_PIECE);
+      if (i % COARSE_PIECE === 0) (C.coarse[cp] = new Path2D()).moveTo(ch.a.x - C.o.x, ch.a.y - C.o.y);
+      if (i % COARSE_STRIDE === COARSE_STRIDE - 1) C.coarse[cp]?.lineTo(ch.b.x - C.o.x, ch.b.y - C.o.y);
+      const kb = Math.floor(g / BLOCK);
+      let B = T.blocks.get(kb);
+      if (!B) {
+        T.blocks.set(kb, (B = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, base: kb * BLOCK, o: C.o, path: new Path2D() }));
+        B.path.moveTo(ch.a.x - B.o.x, ch.a.y - B.o.y);
+      }
+      if (g % BLOCK_STRIDE === BLOCK_STRIDE - 1) B.path.lineTo(ch.b.x - B.o.x, ch.b.y - B.o.y);
+      B.minX = Math.min(B.minX, ch.a.x, ch.b.x);
+      B.minY = Math.min(B.minY, ch.a.y, ch.b.y);
+      B.maxX = Math.max(B.maxX, ch.a.x, ch.b.x);
+      B.maxY = Math.max(B.maxY, ch.a.y, ch.b.y);
       for (const p of [ch.a, ch.b, ch.c]) {
         C.minX = Math.min(C.minX, p.x);
         C.minY = Math.min(C.minY, p.y);
@@ -391,6 +436,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     }
     T.built = end;
     for (const k of T.chunks.keys()) if ((k + 1) * TRAIL_CHUNK <= chase.dropped) T.chunks.delete(k);
+    for (const k of T.blocks.keys()) if ((k + 1) * BLOCK <= chase.dropped) T.blocks.delete(k);
     const dpr = window.devicePixelRatio || 1;
     const v = view.current;
     const { w, h } = size.current;
@@ -403,48 +449,80 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const shown = [...T.chunks.values()].filter((C) => C.maxX >= minX && C.minX <= maxX && C.maxY >= minY && C.minY <= maxY);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
-    ctx.lineWidth = lw * 3.2;
-    for (const C of shown) {
-      worldTransform(ctx, v, dpr, C.o);
-      ctx.stroke(C.all);
-    }
-    ctx.lineWidth = lw * 1.8;
-    // A closed circuit takes one solid colour by its length, as on the patch.
-    if (chase.status === 'closed') {
-      ctx.strokeStyle = circuitColor(circuits, chase.steps, circuitPalette, ink);
-      for (const C of shown) {
-        worldTransform(ctx, v, dpr, C.o);
-        ctx.stroke(C.all);
-      }
-      // Its head is back at the start: a marker there would read as a gap in the loop.
-      return;
-    }
-    if (T.mode === 'repeat') {
-      for (const C of shown) {
-        worldTransform(ctx, v, dpr, C.o);
-        for (const [col, b] of C.buckets) {
-          ctx.strokeStyle = col;
-          ctx.stroke(b);
+    const coarse = v.scale < COARSE_SCALE;
+    const blocks = coarse && shown.length * (TRAIL_CHUNK / COARSE_PIECE) > MAX_COARSE_PIECES;
+    const shownBlocks = blocks ? [...T.blocks.values()].filter((B) => B.maxX >= minX && B.minX <= maxX && B.maxY >= minY && B.minY <= maxY) : [];
+    // The whole of a chunk, in one colour.
+    const strokeAll = (C: TrailChunk) => {
+      if (!coarse) ctx.stroke(C.all);
+      else for (const p of C.coarse) ctx.stroke(p);
+    };
+    const held = Math.max(1, chase.chords - 1);
+    const at = (g: number) => (T.mode === 'repeat' ? repeatingRainbow(g) : rainbow((g - chase.dropped) / held));
+    if (blocks) {
+      const halo = cssVar(canvas, '--highlight-halo', '#ffffff');
+      for (const [width, color] of [
+        [lw * 3.2, () => halo],
+        [lw * 1.8, (B: TrailBlock) => (chase.status === 'closed' ? circuitColor(circuits, chase.steps, circuitPalette, ink) : at(B.base + BLOCK / 2))],
+      ] as const) {
+        ctx.lineWidth = width;
+        for (const B of shownBlocks) {
+          worldTransform(ctx, v, dpr, B.o);
+          ctx.strokeStyle = color(B);
+          ctx.stroke(B.path);
         }
       }
+      if (chase.status === 'closed') return;
     } else {
-      // Red at the oldest chord held, violet at the head: each piece in the
-      // colour of where it now sits, or each chunk when too many show.
-      const held = Math.max(1, chase.chords - 1);
-      const at = (g: number) => rainbow((g - chase.dropped) / held);
-      const fine = shown.length * (TRAIL_CHUNK / TRAIL_PIECE) <= MAX_TRAIL_PIECES;
+      ctx.strokeStyle = cssVar(canvas, '--highlight-halo', '#ffffff');
+      ctx.lineWidth = lw * 3.2;
       for (const C of shown) {
         worldTransform(ctx, v, dpr, C.o);
-        if (!fine) {
-          ctx.strokeStyle = at(C.base + TRAIL_CHUNK / 2);
-          ctx.stroke(C.all);
-          continue;
+        strokeAll(C);
+      }
+      ctx.lineWidth = lw * 1.8;
+      // A closed circuit takes one solid colour by its length, as on the patch.
+      if (chase.status === 'closed') {
+        ctx.strokeStyle = circuitColor(circuits, chase.steps, circuitPalette, ink);
+        for (const C of shown) {
+          worldTransform(ctx, v, dpr, C.o);
+          strokeAll(C);
         }
-        C.pieces.forEach((p, i) => {
-          ctx.strokeStyle = at(C.base + i * TRAIL_PIECE + TRAIL_PIECE / 2);
-          ctx.stroke(p);
-        });
+        // Its head is back at the start: a marker there would read as a gap in the loop.
+        return;
+      }
+      if (coarse) {
+        for (const C of shown) {
+          worldTransform(ctx, v, dpr, C.o);
+          C.coarse.forEach((p, j) => {
+            ctx.strokeStyle = at(C.base + j * COARSE_PIECE + COARSE_PIECE / 2);
+            ctx.stroke(p);
+          });
+        }
+      } else if (T.mode === 'repeat') {
+        for (const C of shown) {
+          worldTransform(ctx, v, dpr, C.o);
+          for (const [col, b] of C.buckets) {
+            ctx.strokeStyle = col;
+            ctx.stroke(b);
+          }
+        }
+      } else {
+        // Red at the oldest chord held, violet at the head: each piece in the
+        // colour of where it now sits, or each chunk when too many show.
+        const fine = shown.length * (TRAIL_CHUNK / TRAIL_PIECE) <= MAX_TRAIL_PIECES;
+        for (const C of shown) {
+          worldTransform(ctx, v, dpr, C.o);
+          if (!fine) {
+            ctx.strokeStyle = at(C.base + TRAIL_CHUNK / 2);
+            ctx.stroke(C.all);
+            continue;
+          }
+          C.pieces.forEach((p, i) => {
+            ctx.strokeStyle = at(C.base + i * TRAIL_PIECE + TRAIL_PIECE / 2);
+            ctx.stroke(p);
+          });
+        }
       }
     }
     const hd = chase.headPt;
@@ -666,21 +744,27 @@ export function PatchCanvas(props: PatchCanvasProps) {
 
   const drawRef = useRef(draw);
   drawRef.current = draw;
-  // Anything but a view change needs a full draw.
-  const quick = useRef(false);
+  // Anything but a view change needs a full draw, and a view change only
+  // asks for a quick one: a chase moves the view every frame, so it must not
+  // be able to cancel a full draw that something else asked for.
+  const needFull = useRef(true);
   const settleTimer = useRef(0);
   const frameFn = useCallback(() => {
     frame.current = 0;
     const snap = snapshot.current;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
-    if (!quick.current || morph.current || !snap || !canvas || !ctx || snap.canvas.width !== canvas.width || snap.canvas.height !== canvas.height) {
+    const v = view.current;
+    const k = snap ? v.scale / snap.view.scale : 1;
+    // Strayed far from the snapshot (a chase never lets the view settle):
+    // what's on screen would be mostly blank, so draw it all again.
+    const strayed = !snap || k < 0.7 || k > 1.4 || Math.abs(v.tx - k * snap.view.tx) > 0.25 * size.current.w || Math.abs(v.ty - k * snap.view.ty) > 0.25 * size.current.h;
+    if (needFull.current || strayed || morph.current || !snap || !canvas || !ctx || snap.canvas.width !== canvas.width || snap.canvas.height !== canvas.height) {
+      needFull.current = false;
       drawRef.current();
       return;
     }
     const dpr = window.devicePixelRatio || 1;
-    const v = view.current;
-    const k = v.scale / snap.view.scale;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = cssVar(canvas, '--canvas-bg', '#fbfaf7');
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -690,7 +774,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     reportView();
   }, []);
   const schedule = useCallback(() => {
-    quick.current = false;
+    needFull.current = true;
     if (!frame.current) frame.current = requestAnimationFrame(frameFn);
   }, [draw, frameFn]); // a new draw (new geometry, colours, …) is the cue for a full redraw
   const scheduleRef = useRef(schedule);
@@ -705,7 +789,6 @@ export function PatchCanvas(props: PatchCanvasProps) {
       scheduleRef.current();
       return;
     }
-    quick.current = true;
     if (!frame.current) frame.current = requestAnimationFrame(frameFn);
     window.clearTimeout(settleTimer.current);
     settleTimer.current = window.setTimeout(() => scheduleRef.current(), 160);
