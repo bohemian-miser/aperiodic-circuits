@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { InfinitePlane } from '../infinite';
 import { computeAdjacency } from '../ruleset';
 import { computeCircuits } from '../circuits';
@@ -57,6 +57,24 @@ describe('circuit ink', () => {
     expect(ink.version).toBe(v);
     expect(ink.size).toBe(3);
     expect(ink.length({ c: { x: 1, y: 0 } })).toBe(3);
+  });
+
+  it('skips circuits it already holds whole, and still completes one held only in part', () => {
+    const ink = new CircuitInk();
+    const chords = [0, 1, 2, 3].map((k) => ({ inst: 0, a: { x: k, y: 0 }, b: { x: k + 1, y: 0 }, c: { x: k, y: 1 } }));
+    const patch = { circuitLengths: new Map([[4, 1]]), chords, paths: [{ chords: [0, 1, 2, 3], closed: true, ends: [] }] } as never;
+    // A chase that held only the last two chords of it.
+    ink.keep(chords.slice(2), 4);
+    expect(ink.size).toBe(2);
+    ink.remember(patch);
+    expect(ink.size).toBe(4);
+    const v = ink.version;
+    // Seen whole again: looked up by its first chord, nothing re-kept.
+    const keep = vi.spyOn(ink, 'keep');
+    ink.remember(patch);
+    expect(keep).not.toHaveBeenCalled();
+    expect(ink.version).toBe(v);
+    expect(ink.length(chords[1])).toBe(4);
   });
 
   it('colours a length the same however many others are on screen', () => {
