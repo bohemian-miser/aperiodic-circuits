@@ -112,9 +112,14 @@ export function ExplorerPage({ route }: Props) {
   const [pace, setPace] = useStoredNumber('chase-pace', 24, (n) => n >= 1 && n <= 240);
   const [damping, setDamping] = useStoredNumber('chase-damping', 1, (n) => n >= MIN_DAMPING && n <= MAX_DAMPING);
   const [hold, setHold] = useStoredNumber('chase-hold', 0, (n) => n >= 0 && Number.isInteger(n));
-  // The traced line's rainbow: cycling every few hundred tiles, or one
-  // gradient stretched over the whole line (the Spectre map's way).
-  const [stretchRainbow, setStretchRainbow] = useStoredFlag('trail-rainbow-stretch', false);
+  // The traced line's rainbow: one gradient stretched over the whole line
+  // (the Spectre map's way), or cycling every few hundred tiles.
+  const [repeatRainbow, setRepeatRainbow] = useStoredFlag('trail-rainbow-repeat', false);
+  const stretchRainbow = !repeatRainbow;
+  const setStretchRainbow = (on: boolean) => setRepeatRainbow(!on);
+  // Circuit colours: by each length's rank (held once given), or by the length itself.
+  const [lengthPalette, setLengthPalette] = useStoredFlag('circuit-colours-by-length', false);
+  const circuitPalette = lengthPalette ? 'length' : 'rank';
   const [chase, setChase] = useState<StrandChase | null>(null);
   const [chaseInfo, setChaseInfo] = useState<{ steps: number; status: ChaseStatus } | null>(null);
 
@@ -358,7 +363,7 @@ export function ExplorerPage({ route }: Props) {
   };
 
   const ruleSets = ruleSetsFor(tiling.id);
-  const colors = useMemo(() => pathColors(circuits, infinite), [circuits, infinite]);
+  const colors = useMemo(() => pathColors(circuits, circuitPalette, ink), [circuits, circuitPalette, ink, ink?.version]);
   const lengths = [...circuits.circuitLengths.entries()].sort((a, b) => a[0] - b[0]);
   const sel = selectedPath !== null ? circuits.paths[selectedPath] : null;
 
@@ -464,21 +469,21 @@ export function ExplorerPage({ route }: Props) {
                 <span className="hint">Rainbow</span>
                 <button
                   type="button"
-                  className={!stretchRainbow ? 'on' : ''}
-                  onClick={() => setStretchRainbow(false)}
-                  aria-pressed={!stretchRainbow}
-                  title={`Red to violet and back every ${TRAIL_RAINBOW_PERIOD} tiles, so nearby stretches of the line tell apart`}
-                >
-                  Repeating
-                </button>
-                <button
-                  type="button"
                   className={stretchRainbow ? 'on' : ''}
                   onClick={() => setStretchRainbow(true)}
                   aria-pressed={stretchRainbow}
                   title="One gradient over the whole line, red at the start to violet at the head, restretching as it grows (as on the Spectre map)"
                 >
                   Whole line
+                </button>
+                <button
+                  type="button"
+                  className={!stretchRainbow ? 'on' : ''}
+                  onClick={() => setStretchRainbow(false)}
+                  aria-pressed={!stretchRainbow}
+                  title={`Red to violet and back every ${TRAIL_RAINBOW_PERIOD} tiles, so nearby stretches of the line tell apart`}
+                >
+                  Repeating
                 </button>
               </div>
               {chaseOn && (
@@ -584,8 +589,11 @@ export function ExplorerPage({ route }: Props) {
             <label>
               <input type="checkbox" checked={showTiles} disabled={!showBackground} onChange={(e) => setShowTiles(e.target.checked)} /> Tile colours
             </label>
-            <label title={infinite ? 'Infinite mode draws open lines in one colour: only part of one is ever on screen, so its rainbow would shift as you pan' : 'Colour open lines red to violet along their length'}>
-              <input type="checkbox" checked={rainbowLines && !infinite} disabled={infinite} onChange={(e) => setRainbowLines(e.target.checked)} /> Rainbow lines
+            <label title="Colour open lines red to violet along their length (in infinite mode, the part of each that is on screen)">
+              <input type="checkbox" checked={rainbowLines} onChange={(e) => setRainbowLines(e.target.checked)} /> Rainbow lines
+            </label>
+            <label title="Off: each circuit length gets its own hue by its place among the lengths, kept once given. On: the hue comes from the length itself, short warm to long violet, the same everywhere.">
+              <input type="checkbox" checked={lengthPalette} onChange={(e) => setLengthPalette(e.target.checked)} /> Colour by length
             </label>
             <label>
               <input type="checkbox" checked={showClassEdges} onChange={(e) => setShowClassEdges(e.target.checked)} /> Selected edges
@@ -633,7 +641,8 @@ export function ExplorerPage({ route }: Props) {
           circuits={circuits}
           showTiles={showBackground && showTiles}
           showOutlines={showBackground}
-          rainbowLines={rainbowLines && !infinite}
+          rainbowLines={rainbowLines}
+          circuitPalette={circuitPalette}
           ink={ink}
           inkVersion={ink?.version}
           dimOthers={!infinite}

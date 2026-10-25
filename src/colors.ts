@@ -34,9 +34,14 @@ export function circuitLengthColor(length: number): string {
 export const OPEN_COLOR = '#6f86b0';
 export const TAIL_COLOR = '#e5484d';
 
-/** Red through violet, t in [0, 1]. */
+/**
+ * Red through violet, t in [0, 1]: the Spectre project's ramp, hue 0 to 300
+ * with the lightness lifted round blue so the dark end still reads.
+ */
 export function rainbow(t: number): string {
-  return `hsl(${(t * 290).toFixed(0)} 85% 55%)`;
+  const h = Math.max(0, Math.min(1, t)) * 300;
+  const l = 50 + 15 * Math.cos(((h - 240) * Math.PI) / 180);
+  return `hsl(${h.toFixed(1)} 100% ${l.toFixed(1)}%)`;
 }
 
 export type Rgb = readonly [number, number, number];
