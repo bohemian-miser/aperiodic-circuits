@@ -3,8 +3,9 @@ import type { Chord, CircuitResult } from '../core/circuits';
 import type { Pt } from '../core/geom';
 import { edgeSeamIndex, type RuleSet } from '../core/ruleset';
 import { instancePts, patchBounds, prototile, type TileInstance, type Tiling } from '../core/tiling';
-import { classColor, lengthHue, mixColor, OPEN_COLOR, rainbow, TAIL_COLOR, toRgb, type Rgb } from '../colors';
+import { circuitLengthColor, classColor, lengthHue, mixColor, OPEN_COLOR, rainbow, TAIL_COLOR, toRgb, type Rgb } from '../colors';
 import type { StrandChase } from '../core/chase';
+import type { CircuitInk } from '../core/ink';
 import type { SuperInstance } from '../core/infinite';
 import { advanceFollowCamera, createFollowCamera } from '../core/followCamera';
 import { halfAt, MORPH_MS, morphChords, morphProgress, prefersReducedMotion, type ChordMorph } from '../core/morph';
@@ -71,6 +72,17 @@ export interface PatchCanvasProps {
    * sit below the top one. Changing them never moves the view.
    */
   readonly insets?: { readonly top: number; readonly bottom: number };
+  /**
+   * Circuits found earlier, kept by where they are (infinite mode): circuits
+   * take the colour of their length itself rather than its rank on screen,
+   * and a chord on a kept circuit keeps that colour even where the patch no
+   * longer holds the whole circuit, or isn't traced at all.
+   */
+  readonly ink?: CircuitInk | null;
+  /** The ink's version, so a newly kept circuit recolours the lines. */
+  readonly inkVersion?: number;
+  /** Fade everything else while a line is picked or chased (default true). */
+  readonly dimOthers?: boolean;
 }
 
 export type TrailRainbow = 'repeat' | 'stretch';
@@ -183,17 +195,24 @@ function bez(a: Pt, c: Pt, b: Pt, t: number): Pt {
   return { x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y };
 }
 
-export function pathColors(r: CircuitResult): string[] {
+/**
+ * Each line's colour. Circuits are coloured by length: by its rank among the
+ * patch's lengths, or (`byLength`, infinite mode, where what's on screen keeps
+ * changing) by the length itself.
+ */
+export function pathColors(r: CircuitResult, byLength = false): string[] {
   const lengths = [...r.circuitLengths.keys()].sort((a, b) => a - b);
   const rank = new Map(lengths.map((l, i) => [l, i]));
-  return r.paths.map((p) => (p.closed ? lengthHue(rank.get(p.chords.length) ?? 0) : p.ends.includes('tail') ? TAIL_COLOR : OPEN_COLOR));
+  const closed = (len: number) => (byLength ? circuitLengthColor(len) : lengthHue(rank.get(len) ?? 0));
+  return r.paths.map((p) => (p.closed ? closed(p.chords.length) : p.ends.includes('tail') ? TAIL_COLOR : OPEN_COLOR));
 }
 
 /**
  * The colour of a circuit of length `len`: the patch's colour for that length,
  * or, for a length not on the patch, the one it would get if it were.
  */
-function circuitColor(r: CircuitResult | null | undefined, len: number): string {
+function circuitColor(r: CircuitResult | null | undefined, len: number, byLength = false): string {
+  if (byLength) return circuitLengthColor(len);
   let rank = 0;
   for (const l of r?.circuitLengths.keys() ?? []) if (l < len) rank++;
   return lengthHue(rank);
@@ -206,7 +225,7 @@ function chordWidth(scale: number, lineWidth = 1): number {
 }
 
 export function PatchCanvas(props: PatchCanvasProps) {
-  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath, chase = null, trailRainbow = 'repeat', supertiles, glyph, origin: O = ORIGIN } = props;
+  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath, chase = null, trailRainbow = 'repeat', supertiles, glyph, origin: O = ORIGIN, ink = null, inkVersion, dimOthers = true } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 });
@@ -284,7 +303,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
 
   const chordGeo = useMemo(() => {
     if (!circuits) return null;
-    const colors = pathColors(circuits);
+    const colors = pathColors(circuits, ink !== null);
     // Open lines (the candidates for infinite ones) run through a rainbow
     // from one end to the other, so you can see where a long one goes.
     const chordColor: string[] = circuits.chords.map((_, i) => colors[circuits.pathOfChord[i]] ?? OPEN_COLOR);
@@ -292,6 +311,14 @@ export function PatchCanvas(props: PatchCanvasProps) {
       if (path.closed || path.ends.includes('tail') || path.chords.length < 2) continue;
       const n = path.chords.length;
       path.chords.forEach((ci, k) => (chordColor[ci] = rainbow(Math.round((k / (n - 1)) * 47) / 47)));
+    }
+    // What isn't a whole circuit here may be part of one found earlier.
+    if (ink?.size) {
+      circuits.chords.forEach((ch, i) => {
+        if (circuits.paths[circuits.pathOfChord[i]]?.closed) return;
+        const len = ink.length(ch);
+        if (len !== undefined) chordColor[i] = circuitLengthColor(len);
+      });
     }
     const byColor = new Map<string, Path2D>();
     circuits.chords.forEach((ch, i) => {
@@ -301,7 +328,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       addChord(p, ch, O);
     });
     return { byColor, colors, chordColor };
-  }, [circuits, rainbowLines, O]);
+  }, [circuits, rainbowLines, O, ink, inkVersion]);
 
   const morph = useRef<MorphState | null>(null);
   const morphFrom = useRef<{ circuits?: CircuitResult; colors?: readonly string[]; key: unknown }>({ key: undefined });
@@ -380,7 +407,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     ctx.lineWidth = lw * 1.8;
     // A closed circuit takes one solid colour by its length, as on the patch.
     if (chase.status === 'closed') {
-      ctx.strokeStyle = circuitColor(circuits, chase.steps);
+      ctx.strokeStyle = circuitColor(circuits, chase.steps, ink !== null);
       for (const C of shown) {
         worldTransform(ctx, v, dpr, C.o);
         ctx.stroke(C.all);
@@ -443,7 +470,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     const { w, h } = size.current;
     const v = view.current;
     const px = 1 / v.scale;
-    const dim = selectedGeo !== null || chase !== null;
+    const dim = dimOthers && (selectedGeo !== null || chase !== null);
     const lw = chordWidth(v.scale, props.lineWidth);
     // The tiles and edges, then set up to stroke chords.
     const ground = (c: CanvasRenderingContext2D) => {
@@ -603,7 +630,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     snapshot.current = { canvas: snap, view: { ...v }, ms: performance.now() - t0 };
     drawTrail(ctx, canvas);
     reportView();
-  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase, trailRainbow, O]);
+  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase, trailRainbow, O, dimOthers, ink]);
 
   // Tell the owner what's on screen once the view stops moving.
   const viewTimer = useRef(0);

@@ -10,6 +10,26 @@ export function lengthHue(rank: number): string {
   return `hsl(${((rank * 47) % 360).toFixed(0)} 80% 45%)`;
 }
 
+const GOLDEN = 0.6180339887498949;
+const ROOT2 = 1.4142135623730951;
+
+/**
+ * A circuit's colour from its length itself rather than its rank among the
+ * lengths on screen, so a circuit is the same colour wherever it turns up and
+ * however much of the plane is in view (the Spectre project's
+ * `circuitLengthRgb`): hue ramps with log length over 18 octaves, warm for
+ * short, cooling as they grow; lightness and saturation jitter on two
+ * irrationals so neighbouring lengths still differ.
+ */
+export function circuitLengthColor(length: number): string {
+  const n = Math.max(1, Math.abs(Math.round(length)));
+  const t = Math.min(1, Math.log2(n) / 18);
+  const h = 360 * (0.02 + 0.94 * t);
+  const l = 46 + 22 * ((n * GOLDEN) % 1);
+  const s = 80 + 20 * ((n * ROOT2) % 1);
+  return `hsl(${h.toFixed(1)} ${s.toFixed(1)}% ${l.toFixed(1)}%)`;
+}
+
 // Mid blue-grey: readable on both the light and the dark canvas.
 export const OPEN_COLOR = '#6f86b0';
 export const TAIL_COLOR = '#e5484d';
