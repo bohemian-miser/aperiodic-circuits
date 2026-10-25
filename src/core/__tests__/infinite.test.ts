@@ -27,6 +27,19 @@ describe('infinite mode', () => {
     }
   });
 
+  it('tiles stay exactly put after a far zoomed-out view grows the chain high', () => {
+    for (const t of all) {
+      const plane = new InfinitePlane(t, t.defaultRoot);
+      const small = { minX: 294, minY: 294, maxX: 306, maxY: 306 };
+      const key = (i: { type: string; xform: readonly number[] }) => `${i.type}@${qkey(transPt(i.xform as never, prototile(t, i.type).pts[0]), 1e7)}`;
+      const before = plane.query(small).instances.map(key);
+      // What zooming far out does: the chain climbs until its top covers this.
+      plane.query({ minX: -1e7, minY: -1e7, maxX: 1e7, maxY: 1e7 }, 20_000, { lod: true });
+      const after = new Set(plane.query(small).instances.map(key));
+      for (const k of before) expect(after.has(k), `${t.id} ${k}`).toBe(true);
+    }
+  });
+
   it('tiles stay put as the view moves away and the chain grows', () => {
     for (const t of all) {
       const plane = new InfinitePlane(t, t.defaultRoot);
