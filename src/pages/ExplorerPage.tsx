@@ -8,6 +8,7 @@ import { getTiling } from '../core/tilings';
 import { InfinitePlane, supportsInfinite, type Rect } from '../core/infinite';
 import { qkey } from '../core/polygon';
 import { StrandChase, type ChaseStatus } from '../core/chase';
+import { CircuitInk } from '../core/ink';
 import type { Tiling } from '../core/tiling';
 import { PatchCanvas, TRAIL_RAINBOW_PERIOD, pathColors } from '../components/PatchCanvas';
 import { TileEditor } from '../components/TileEditor';
@@ -161,14 +162,19 @@ export function ExplorerPage({ route }: Props) {
   // costs, so a big infinite view only lays the chords, as the Spectre map
   // does past its circuit ceiling: the lines show, uncoloured, and a click
   // still chases one. Nor does a running chase trace: it regrows the view
-  // every moment, and the lines behind the trail are dimmed anyway.
+  // every moment. The circuits found so far keep their colours meanwhile.
   const chasing = chaseInfo?.status === 'running';
   const trace = !infinite || (instances.length <= traceLimit && !chasing);
   const adjacency = useMemo(() => (trace ? computeAdjacency(tiling, instances) : null), [trace, tiling, instances]);
-  const circuits: CircuitResult = useMemo(
-    () => (adjacency ? computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }) : layChords({ tiling, ruleSet, instances, selection, combo })),
-    [tiling, ruleSet, instances, selection, combo, adjacency],
-  );
+  // Infinite mode keeps every circuit it finds, by where it is, as the
+  // Spectre map does: it stays coloured when the view moves on and the patch
+  // regrown round it only holds part of it.
+  const ink = useMemo(() => (plane ? new CircuitInk() : null), [plane, ruleSet, selection, combo]);
+  const circuits: CircuitResult = useMemo(() => {
+    const r = adjacency ? computeCircuits({ tiling, ruleSet, instances, selection, combo, adjacency }) : layChords({ tiling, ruleSet, instances, selection, combo });
+    ink?.remember(r);
+    return r;
+  }, [tiling, ruleSet, instances, selection, combo, adjacency, ink]);
   // Same tiles and crossings, so a new pairing animates on the canvas.
   const morphKey = useMemo(() => ({}), [tiling, ruleSet, instances, selection]);
   useEffect(() => setPickedAt(null), [tiling, ruleSet, root, seed, infinite]);
@@ -179,9 +185,16 @@ export function ExplorerPage({ route }: Props) {
     if (chase) chase.hold = hold;
   }, [chase, hold]);
   useEffect(() => setChaseInfo(chase ? { steps: chase.steps, status: chase.status } : null), [chase]);
+  // A chase that closes is kept too, however far it ran from the view.
+  const keptChase = useRef<StrandChase | null>(null);
   const onChaseTick = useCallback(() => {
-    if (chase) setChaseInfo({ steps: chase.steps, status: chase.status });
-  }, [chase]);
+    if (!chase) return;
+    if (chase.status === 'closed' && ink && keptChase.current !== chase) {
+      keptChase.current = chase;
+      ink.keep(Array.from({ length: chase.chords }, (_, i) => chase.chord(i)), chase.steps);
+    }
+    setChaseInfo({ steps: chase.steps, status: chase.status });
+  }, [chase, ink]);
   const selectedPath = useMemo(() => {
     if (!pickedAt) return null;
     const want = new Set(pickedAt);
@@ -345,7 +358,7 @@ export function ExplorerPage({ route }: Props) {
   };
 
   const ruleSets = ruleSetsFor(tiling.id);
-  const colors = useMemo(() => pathColors(circuits), [circuits]);
+  const colors = useMemo(() => pathColors(circuits, infinite), [circuits, infinite]);
   const lengths = [...circuits.circuitLengths.entries()].sort((a, b) => a[0] - b[0]);
   const sel = selectedPath !== null ? circuits.paths[selectedPath] : null;
 
@@ -571,8 +584,8 @@ export function ExplorerPage({ route }: Props) {
             <label>
               <input type="checkbox" checked={showTiles} disabled={!showBackground} onChange={(e) => setShowTiles(e.target.checked)} /> Tile colours
             </label>
-            <label title="Colour open lines red to violet along their length">
-              <input type="checkbox" checked={rainbowLines} onChange={(e) => setRainbowLines(e.target.checked)} /> Rainbow lines
+            <label title={infinite ? 'Infinite mode draws open lines in one colour: only part of one is ever on screen, so its rainbow would shift as you pan' : 'Colour open lines red to violet along their length'}>
+              <input type="checkbox" checked={rainbowLines && !infinite} disabled={infinite} onChange={(e) => setRainbowLines(e.target.checked)} /> Rainbow lines
             </label>
             <label>
               <input type="checkbox" checked={showClassEdges} onChange={(e) => setShowClassEdges(e.target.checked)} /> Selected edges
@@ -620,7 +633,10 @@ export function ExplorerPage({ route }: Props) {
           circuits={circuits}
           showTiles={showBackground && showTiles}
           showOutlines={showBackground}
-          rainbowLines={rainbowLines}
+          rainbowLines={rainbowLines && !infinite}
+          ink={ink}
+          inkVersion={ink?.version}
+          dimOthers={!infinite}
           classEdges={showClassEdges ? selection : null}
           selectedPath={chase ? null : selectedPath}
           onSelectPath={setSelectedPath}
