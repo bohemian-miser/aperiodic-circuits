@@ -1,5 +1,5 @@
 /**
- * The circuits infinite mode has found, kept by where they are on the plane,
+ * The circuits infinite mode has found, and the colour each length was given, kept by where they are on the plane,
  * as the Spectre map keeps its found circuits: a circuit found once stays
  * coloured when the view moves and the patch regrown round it no longer holds
  * all of it (so it would trace as an open line), when the view holds too many
@@ -25,6 +25,8 @@ export class CircuitInk {
   private readonly owner = new Map<string, string>();
   /** Circuits by identity (a chord key and the length), oldest first, with their chord keys. */
   private readonly circuits = new Map<string, readonly string[]>();
+  /** Circuit length -> its place in the ranked palette, given the first time it is seen and kept. */
+  private readonly ranks = new Map<number, number>();
   /** Bumped whenever something new is kept. */
   version = 0;
 
@@ -37,14 +39,30 @@ export class CircuitInk {
     return this.lengthOf.size ? this.lengthOf.get(chordKey(ch.c)) : undefined;
   }
 
+  /**
+   * A length's place in the ranked palette. The first patch ranks its lengths
+   * in order, as the supertile view does; a length seen later takes the next
+   * place. Either way it keeps it, so a circuit never changes colour.
+   */
+  rank(length: number): number {
+    let r = this.ranks.get(length);
+    if (r === undefined) {
+      this.ranks.set(length, (r = this.ranks.size));
+      this.version++;
+    }
+    return r;
+  }
+
   /** Keep every closed circuit of a traced patch. */
   remember(r: CircuitResult): void {
+    for (const len of [...r.circuitLengths.keys()].sort((a, b) => a - b)) this.rank(len);
     for (const p of r.paths) if (p.closed) this.keep(p.chords.map((i) => r.chords[i]), p.chords.length);
   }
 
   /** Keep one circuit of `length` chords (all of it, or as much as is held). */
   keep(chords: readonly { readonly c: Pt }[], length: number): void {
     if (chords.length === 0) return;
+    this.rank(length);
     const keys = chords.map((ch) => chordKey(ch.c));
     let first = keys[0];
     for (const k of keys) if (k < first) first = k;

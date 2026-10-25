@@ -83,9 +83,16 @@ export interface PatchCanvasProps {
   readonly inkVersion?: number;
   /** Fade everything else while a line is picked or chased (default true). */
   readonly dimOthers?: boolean;
+  /**
+   * How circuits are coloured: 'rank', each length a hue by its place among
+   * the lengths (held by the ink once given, in infinite mode), or 'length',
+   * a hue from the length itself, the same everywhere.
+   */
+  readonly circuitPalette?: CircuitPalette;
 }
 
 export type TrailRainbow = 'repeat' | 'stretch';
+export type CircuitPalette = 'rank' | 'length';
 
 /** The repeating rainbow runs red to violet and back every this many tiles. */
 export const TRAIL_RAINBOW_PERIOD = 600;
@@ -99,8 +106,8 @@ const TRAIL_CHUNK = 512;
 const TRAIL_PIECE = 8;
 /** With more pieces than this on screen, a whole chunk takes one colour. */
 const MAX_TRAIL_PIECES = 2000;
-/** Colour steps along a rainbow. */
-const RAINBOW_STEPS = 47;
+/** Colour steps along a rainbow, where its chords are batched by colour. */
+const RAINBOW_STEPS = 120;
 
 interface TrailChunk {
   minX: number;
@@ -196,23 +203,21 @@ function bez(a: Pt, c: Pt, b: Pt, t: number): Pt {
 }
 
 /**
- * Each line's colour. Circuits are coloured by length: by its rank among the
- * patch's lengths, or (`byLength`, infinite mode, where what's on screen keeps
- * changing) by the length itself.
+ * Each line's colour. Circuits are coloured by length, per the palette: by the
+ * length's rank (among the patch's lengths, or as the ink first ranked it), or
+ * by the length itself.
  */
-export function pathColors(r: CircuitResult, byLength = false): string[] {
-  const lengths = [...r.circuitLengths.keys()].sort((a, b) => a - b);
-  const rank = new Map(lengths.map((l, i) => [l, i]));
-  const closed = (len: number) => (byLength ? circuitLengthColor(len) : lengthHue(rank.get(len) ?? 0));
-  return r.paths.map((p) => (p.closed ? closed(p.chords.length) : p.ends.includes('tail') ? TAIL_COLOR : OPEN_COLOR));
+export function pathColors(r: CircuitResult, palette: CircuitPalette = 'rank', ink: CircuitInk | null = null): string[] {
+  return r.paths.map((p) => (p.closed ? circuitColor(r, p.chords.length, palette, ink) : p.ends.includes('tail') ? TAIL_COLOR : OPEN_COLOR));
 }
 
 /**
  * The colour of a circuit of length `len`: the patch's colour for that length,
  * or, for a length not on the patch, the one it would get if it were.
  */
-function circuitColor(r: CircuitResult | null | undefined, len: number, byLength = false): string {
-  if (byLength) return circuitLengthColor(len);
+function circuitColor(r: CircuitResult | null | undefined, len: number, palette: CircuitPalette = 'rank', ink: CircuitInk | null = null): string {
+  if (palette === 'length') return circuitLengthColor(len);
+  if (ink) return lengthHue(ink.rank(len));
   let rank = 0;
   for (const l of r?.circuitLengths.keys() ?? []) if (l < len) rank++;
   return lengthHue(rank);
@@ -225,7 +230,7 @@ function chordWidth(scale: number, lineWidth = 1): number {
 }
 
 export function PatchCanvas(props: PatchCanvasProps) {
-  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath, chase = null, trailRainbow = 'repeat', supertiles, glyph, origin: O = ORIGIN, ink = null, inkVersion, dimOthers = true } = props;
+  const { tiling, instances, ruleSet, circuits, showTiles = true, showOutlines = true, rainbowLines = true, classEdges = null, selectedPath = null, onSelectPath, chase = null, trailRainbow = 'repeat', supertiles, glyph, origin: O = ORIGIN, ink = null, inkVersion, dimOthers = true, circuitPalette = 'rank' } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 });
@@ -303,21 +308,21 @@ export function PatchCanvas(props: PatchCanvasProps) {
 
   const chordGeo = useMemo(() => {
     if (!circuits) return null;
-    const colors = pathColors(circuits, ink !== null);
+    const colors = pathColors(circuits, circuitPalette, ink);
     // Open lines (the candidates for infinite ones) run through a rainbow
     // from one end to the other, so you can see where a long one goes.
     const chordColor: string[] = circuits.chords.map((_, i) => colors[circuits.pathOfChord[i]] ?? OPEN_COLOR);
     for (const path of rainbowLines ? circuits.paths : []) {
       if (path.closed || path.ends.includes('tail') || path.chords.length < 2) continue;
       const n = path.chords.length;
-      path.chords.forEach((ci, k) => (chordColor[ci] = rainbow(Math.round((k / (n - 1)) * 47) / 47)));
+      path.chords.forEach((ci, k) => (chordColor[ci] = stretchedRainbow(k / (n - 1))));
     }
     // What isn't a whole circuit here may be part of one found earlier.
     if (ink?.size) {
       circuits.chords.forEach((ch, i) => {
         if (circuits.paths[circuits.pathOfChord[i]]?.closed) return;
         const len = ink.length(ch);
-        if (len !== undefined) chordColor[i] = circuitLengthColor(len);
+        if (len !== undefined) chordColor[i] = circuitColor(circuits, len, circuitPalette, ink);
       });
     }
     const byColor = new Map<string, Path2D>();
@@ -328,7 +333,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       addChord(p, ch, O);
     });
     return { byColor, colors, chordColor };
-  }, [circuits, rainbowLines, O, ink, inkVersion]);
+  }, [circuits, rainbowLines, O, ink, inkVersion, circuitPalette]);
 
   const morph = useRef<MorphState | null>(null);
   const morphFrom = useRef<{ circuits?: CircuitResult; colors?: readonly string[]; key: unknown }>({ key: undefined });
@@ -407,7 +412,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     ctx.lineWidth = lw * 1.8;
     // A closed circuit takes one solid colour by its length, as on the patch.
     if (chase.status === 'closed') {
-      ctx.strokeStyle = circuitColor(circuits, chase.steps, ink !== null);
+      ctx.strokeStyle = circuitColor(circuits, chase.steps, circuitPalette, ink);
       for (const C of shown) {
         worldTransform(ctx, v, dpr, C.o);
         ctx.stroke(C.all);
@@ -427,7 +432,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
       // Red at the oldest chord held, violet at the head: each piece in the
       // colour of where it now sits, or each chunk when too many show.
       const held = Math.max(1, chase.chords - 1);
-      const at = (g: number) => stretchedRainbow((g - chase.dropped) / held);
+      const at = (g: number) => rainbow((g - chase.dropped) / held);
       const fine = shown.length * (TRAIL_CHUNK / TRAIL_PIECE) <= MAX_TRAIL_PIECES;
       for (const C of shown) {
         worldTransform(ctx, v, dpr, C.o);
@@ -630,7 +635,7 @@ export function PatchCanvas(props: PatchCanvasProps) {
     snapshot.current = { canvas: snap, view: { ...v }, ms: performance.now() - t0 };
     drawTrail(ctx, canvas);
     reportView();
-  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase, trailRainbow, O, dimOthers, ink]);
+  }, [geo, chordGeo, selectedGeo, selectedPath, showTiles, showOutlines, classEdges, props.lineWidth, props.selectedRainbow, chase, trailRainbow, O, dimOthers, ink, circuitPalette]);
 
   // Tell the owner what's on screen once the view stops moving.
   const viewTimer = useRef(0);

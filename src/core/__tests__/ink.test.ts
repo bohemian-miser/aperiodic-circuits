@@ -38,6 +38,16 @@ describe('circuit ink', () => {
     expect(recovered).toBeGreaterThan(0);
   });
 
+  it('ranks the first patch in length order and holds every rank after', () => {
+    const ink = new CircuitInk();
+    const patch = (lengths: number[]) => ({ circuitLengths: new Map(lengths.map((l) => [l, 1])), paths: [], chords: [] }) as never;
+    ink.remember(patch([9, 3, 6]));
+    expect([3, 6, 9].map((l) => ink.rank(l))).toEqual([0, 1, 2]);
+    // A view with only some of them, and a new one: nothing moves.
+    ink.remember(patch([12, 6]));
+    expect([3, 6, 9, 12].map((l) => ink.rank(l))).toEqual([0, 1, 2, 3]);
+  });
+
   it('a circuit seen again is not kept twice', () => {
     const ink = new CircuitInk();
     const chords = [0, 1, 2].map((k) => ({ c: { x: k, y: 0 } }));
