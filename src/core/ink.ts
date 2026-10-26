@@ -53,10 +53,32 @@ export class CircuitInk {
     return r;
   }
 
-  /** Keep every closed circuit of a traced patch. */
+  /**
+   * Keep every closed circuit of a traced patch. A view regrown round the
+   * same ground holds mostly circuits found already, so each is first looked
+   * up by one chord: one already held whole is only touched, not keyed again
+   * chord by chord.
+   */
   remember(r: CircuitResult): void {
     for (const len of [...r.circuitLengths.keys()].sort((a, b) => a - b)) this.rank(len);
-    for (const p of r.paths) if (p.closed) this.keep(p.chords.map((i) => r.chords[i]), p.chords.length);
+    for (const p of r.paths) {
+      if (!p.closed || p.chords.length === 0) continue;
+      if (this.touch(r.chords[p.chords[0]], p.chords.length)) continue;
+      this.keep(p.chords.map((i) => r.chords[i]), p.chords.length);
+    }
+  }
+
+  /**
+   * True if the circuit of `length` through this chord is already held whole,
+   * moving it to the back of the queue to be let go.
+   */
+  private touch(ch: { readonly c: Pt }, length: number): boolean {
+    const id = this.owner.get(chordKey(ch.c));
+    const had = id === undefined ? undefined : this.circuits.get(id);
+    if (!had || had.length < length || !id!.endsWith(`|${length}`)) return false;
+    this.circuits.delete(id!);
+    this.circuits.set(id!, had);
+    return true;
   }
 
   /** Keep one circuit of `length` chords (all of it, or as much as is held). */
